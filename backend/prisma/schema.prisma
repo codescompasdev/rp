@@ -1,0 +1,618 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Multi-tenant: Pale, Banja Luka, Bijeljina — one admin, different workers per company
+model Company {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  type      String   // Centrala, Filiala
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  workers   Worker[]
+  vehicles  Vehicle[]
+  drivers   Driver[]
+  notifications Notification[]
+  notificationSubscriptions NotificationSubscription[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         String    @default("operator") // admin = access all companies, manager/operator = company-scoped
+  companyId    String?
+  company      Company?  @relation(fields: [companyId], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  notifications Notification[]
+  notificationSubscriptions NotificationSubscription[]
+}
+
+model Supplier {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  jib          String?
+  pdv          Boolean  @default(false)
+  type         String
+  bonitet      String
+  city         String?
+  address      String?
+  phone        String?
+  email        String?
+  balance      Decimal  @default(0) @db.Decimal(14, 2)
+  paymentDays  Int      @default(15)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  contracts    Contract[]
+  announcements Announcement[]
+  weighTickets WeighTicket[]
+}
+
+model Customer {
+  id          String       @id @default(cuid())
+  code        String       @unique
+  name        String
+  country     String       @default("BA")
+  creditLimit Decimal      @default(0) @db.Decimal(14, 2)
+  balance     Decimal      @default(0) @db.Decimal(14, 2)
+  blocked     Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  salesOrders SalesOrder[]
+}
+
+model Material {
+  id           String            @id @default(cuid())
+  code         String            @unique
+  name         String
+  category     String
+  categoryId   String?
+  subcategoryId String?
+  categoryRef  MaterialCategory?   @relation(fields: [categoryId], references: [id])
+  subcategoryRef MaterialSubcategory? @relation(fields: [subcategoryId], references: [id])
+  baseUnit     String            @default("KG")
+  lmeLinked    Boolean           @default(false)
+  basePrice    Decimal?          @db.Decimal(14, 4)
+  margin       Decimal?          @db.Decimal(8, 2)
+  buyPrice     Decimal?          @db.Decimal(14, 4)
+  chemicalData Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime         @updatedAt
+  variants     MaterialVariant[]
+  contracts    Contract[]
+  announcements Announcement[]
+  weighTickets WeighTicket[]
+  lots         Lot[]
+  workOrders   WorkOrder[]
+  salesOrders  SalesOrder[]
+  salesOrderItems SalesOrderItem[]
+  inventoryStocks InventoryStock[]
+  inventoryTransactions InventoryTransaction[]
+  xrfAnalyses XrfAnalysis[]
+}
+
+model MaterialCategory {
+  id            String               @id @default(cuid())
+  name          String               @unique
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  subcategories MaterialSubcategory[]
+  materials     Material[]
+}
+
+model MaterialSubcategory {
+  id          String            @id @default(cuid())
+  categoryId  String
+  category    MaterialCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  materials   Material[]
+
+  @@unique([categoryId, name])
+}
+
+model MaterialVariant {
+  id           String   @id @default(cuid())
+  materialId   String
+  material     Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  grade        String
+  condition    String
+  minPurity    Decimal? @db.Decimal(8, 2)
+  buyPrice     Decimal  @db.Decimal(14, 4)
+  chemicalData Json?
+  inventoryStocks InventoryStock[]
+  inventoryTransactions InventoryTransaction[]
+}
+
+model Contract {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  materialId  String
+  material    Material @relation(fields: [materialId], references: [id])
+  formula     String
+  qtyTons     Decimal  @db.Decimal(14, 2)
+  period      String
+  status      String
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  announcements Announcement[]
+}
+
+model Announcement {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  supplierId   String
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+  materialId   String
+  material     Material  @relation(fields: [materialId], references: [id])
+  expectedKg   Decimal   @db.Decimal(14, 2)
+  contractId   String?
+  contract     Contract?  @relation(fields: [contractId], references: [id])
+  status       String
+  expectedDate DateTime
+  truck        String?
+  companyId    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model WeighTicket {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  date       DateTime
+  plate      String
+  driver     String?
+  packagingDetails Json?
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  materialId String
+  material   Material  @relation(fields: [materialId], references: [id])
+  gross      Decimal   @db.Decimal(14, 2)
+  tare       Decimal   @db.Decimal(14, 2)
+  kalo       Decimal   @default(0) @db.Decimal(8, 2)
+  net        Decimal   @db.Decimal(14, 2)
+  pricePerKg Decimal   @db.Decimal(14, 4)
+  total      Decimal   @db.Decimal(14, 2)
+  status     String
+  type       String
+  companyId  String?
+  slipGroupId    String?
+  slipSeq        Int?
+  sellerDocument String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lots       Lot[]
+  xrfAnalyses XrfAnalysis[]
+
+  @@index([slipGroupId])
+}
+
+model TruckOnSite {
+  id          String   @id @default(cuid())
+  plate       String
+  supplierId  String?
+  material   String?
+  entryTime   DateTime
+  status      String
+  statusColor String?
+  companyId   String?
+}
+
+model Lot {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  materialId   String
+  material     Material     @relation(fields: [materialId], references: [id])
+  supplierId   String?
+  ticketId    String?
+  ticket       WeighTicket?  @relation(fields: [ticketId], references: [id])
+  dateReceived DateTime
+  kg           Decimal      @db.Decimal(14, 2)
+  location     String?
+  status       String
+  contractId   String?
+  companyId    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  xrfAnalyses  XrfAnalysis[]
+}
+
+model WorkOrder {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  machine    String
+  inputKg    Decimal  @db.Decimal(14, 2)
+  outputKg   Decimal  @default(0) @db.Decimal(14, 2)
+  yield      Decimal  @default(0) @db.Decimal(8, 2)
+  status     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model SalesOrder {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  qtyKg      Decimal  @db.Decimal(14, 2)
+  pricePerKg Decimal  @db.Decimal(14, 4)
+  total      Decimal  @db.Decimal(14, 2)
+  status     String
+  exportDocs Boolean  @default(false)
+  companyId  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  items      SalesOrderItem[]
+}
+
+model SalesOrderItem {
+  id          String     @id @default(cuid())
+  salesOrderId String
+  salesOrder  SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  materialId  String
+  material    Material   @relation(fields: [materialId], references: [id])
+  qtyKg       Decimal    @db.Decimal(14, 2)
+  pricePerKg  Decimal    @db.Decimal(14, 4)
+  lineTotal   Decimal    @db.Decimal(14, 2)
+  createdAt   DateTime   @default(now())
+
+  @@index([salesOrderId])
+}
+
+model InventoryStock {
+  id          String   @id @default(cuid())
+  materialId  String
+  materialVariantId String?
+  material    Material @relation(fields: [materialId], references: [id])
+  materialVariant MaterialVariant? @relation(fields: [materialVariantId], references: [id])
+  zone        String
+  stockKg     Decimal  @db.Decimal(14, 2)
+  avgBuyPrice Decimal  @db.Decimal(14, 4)
+  mktPrice    Decimal?  @db.Decimal(14, 4)
+  margin      Decimal?  @db.Decimal(14, 2)
+  companyId   String?
+  transactions InventoryTransaction[]
+
+  @@index([materialId, materialVariantId, companyId, zone])
+  @@unique([materialId, materialVariantId, companyId, zone])
+}
+
+model InventoryTransaction {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  materialId  String
+  materialVariantId String?
+  material    Material @relation(fields: [materialId], references: [id])
+  materialVariant MaterialVariant? @relation(fields: [materialVariantId], references: [id])
+  stockId     String?
+  stock       InventoryStock? @relation(fields: [stockId], references: [id])
+  type        String
+  quantityKg  Decimal  @db.Decimal(14, 2)
+  unitPrice   Decimal? @db.Decimal(14, 4)
+  total       Decimal? @db.Decimal(14, 2)
+  note        String?
+  operationId String?
+  createdBy   String?
+  companyId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([operationId])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  message     String
+  payload     Json?
+  isRead      Boolean  @default(false)
+  readAt      DateTime?
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  targetRole  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([userId, createdAt])
+  @@index([targetRole, createdAt])
+}
+
+model NotificationSubscription {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  endpoint    String   @unique
+  p256dh      String
+  auth        String
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, companyId])
+}
+
+model XrfAnalysis {
+  id            String      @id @default(cuid())
+  code          String      @unique
+  ticketId      String?
+  ticket        WeighTicket? @relation(fields: [ticketId], references: [id])
+  lotId         String?
+  lot           Lot?        @relation(fields: [lotId], references: [id])
+  materialId    String?
+  material      Material?   @relation(fields: [materialId], references: [id])
+  sampleRef     String?
+  declaredLabel String?
+  elements      Json
+  totalPct      Decimal?    @db.Decimal(8, 2)
+  remainderPct  Decimal?    @db.Decimal(8, 2)
+  status        String      @default("Draft")
+  createdBy     String?
+  createdAt     DateTime    @default(now())
+}
+
+model WarehouseZone {
+  id       String @id @default(cuid())
+  zone     String @unique
+  type     String
+  materials String?
+  capacity String?
+}
+
+model Container {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  type         String
+  location     String
+  status       String
+  lastMoved    DateTime?
+  daysAtClient Int?
+}
+
+model Vehicle {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  plate            String    @unique
+  type             String?
+  brand            String?
+  make             String?
+  model            String?
+  productionYear   Int?
+  km               Int       @default(0)
+  fuelAvg          Decimal?  @db.Decimal(8, 2)
+  regExpiry        DateTime?
+  status           String
+  images           String[]  @default([])
+  companyId        String?
+  company          Company?  @relation(fields: [companyId], references: [id])
+  vin              String?
+  engineNumber     String?
+  chassisType      String?
+  fuelType         String?
+  euroClass        String?
+  lastService      DateTime?
+  nextInspection   DateTime?
+  insuranceExpiry  DateTime?
+  purchasePrice    Decimal?  @db.Decimal(14, 2)
+  residualValue    Decimal?  @db.Decimal(14, 2)
+  monthlyLeasing   Decimal?  @db.Decimal(14, 2)
+  taxPerYear       Decimal?  @db.Decimal(14, 2)
+  insurancePerYear Decimal?  @db.Decimal(14, 2)
+  drivers          Driver[]
+  maintenanceLogs  FleetMaintenanceLog[]
+  fuelLogs         FleetFuelLog[]
+  registrationLogs FleetRegistrationLog[]
+}
+
+model FleetMaintenanceLog {
+  id          String   @id @default(cuid())
+  vehicleId   String
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  description String
+  cost        Decimal  @db.Decimal(14, 2)
+  date        DateTime
+  attachments String[] @default([])
+  createdAt   DateTime @default(now())
+}
+
+model FleetFuelLog {
+  id        String   @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  liters    Decimal  @db.Decimal(10, 2)
+  cost      Decimal  @db.Decimal(14, 2)
+  odometer  Int?
+  date      DateTime
+  receipt   String?
+  createdAt DateTime @default(now())
+}
+
+model FleetRegistrationLog {
+  id         String   @id @default(cuid())
+  vehicleId  String
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  expiryDate DateTime
+  cost       Decimal  @db.Decimal(14, 2)
+  notes      String?
+  documents  String[] @default([])
+  createdAt  DateTime @default(now())
+}
+
+model Driver {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  name       String
+  phone      String?
+  vehicleId  String?
+  vehicle    Vehicle?   @relation(fields: [vehicleId], references: [id])
+  license    String
+  hoursToday Decimal   @default(0) @db.Decimal(8, 2)
+  status     String
+  companyId  String?
+  company    Company?  @relation(fields: [companyId], references: [id])
+}
+
+model Worker {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  name          String
+  role          String
+  shift         String
+  status        String
+  htxExpiry     DateTime?
+  medicalExpiry DateTime?
+  companyId     String?
+  company       Company?  @relation(fields: [companyId], references: [id])
+}
+
+model Shift {
+  id         String   @id @default(cuid())
+  date       DateTime
+  shift      String
+  workers    Int
+  supervisor String?
+}
+
+model Incident {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  date             DateTime
+  type             String
+  location         String
+  description      String
+  workerId         String?
+  severity         String
+  status           String
+  correctiveAction String?
+  photoUrl         String?
+}
+
+model MaintenanceOrder {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  machine    String
+  type       String
+  task       String
+  scheduled  DateTime
+  assignedTo String
+  status     String
+  priority   String
+}
+
+model SparePart {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  machine   String
+  stockQty  Int
+  minQty    Int
+  price     Decimal  @db.Decimal(14, 2)
+  status    String
+}
+
+model DispatchOrder {
+  id        String  @id @default(cuid())
+  code      String  @unique
+  driverId  String
+  vehicleId String
+  route     String
+  status    String
+  eta       String?
+}
+
+model LmePrice {
+  id        String   @id @default(cuid())
+  metal     String   @unique
+  price     Decimal  @db.Decimal(14, 2)
+  change    Decimal  @db.Decimal(8, 2)
+  currency  String   @default("USD/t")
+  updatedAt DateTime @updatedAt
+}
+
+model FxRate {
+  id        String   @id @default(cuid())
+  pair      String   @unique
+  rate      Decimal  @db.Decimal(12, 4)
+  updatedAt DateTime @updatedAt
+}
+
+model GlEntry {
+  id      String   @id @default(cuid())
+  date    DateTime
+  account String
+  debit   Decimal  @db.Decimal(14, 2)
+  credit  Decimal  @db.Decimal(14, 2)
+  ref     String?
+  desc    String?
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String?  // Frontend expects originalName
+  url          String
+  description  String?
+  uploadedBy   String?
+  companyId    String?
+  createdAt    DateTime @default(now())
+}
+
+model Remark {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  images    String[]  @default([])
+  status    String?   // Frontend expects status
+  companyId String?
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InboundMessage {
+  id         String   @id @default(cuid())
+  firstName  String
+  lastName   String
+  email      String
+  phone      String?
+  message    String
+  source     String?
+  status     String   @default("new")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email, createdAt])
+}

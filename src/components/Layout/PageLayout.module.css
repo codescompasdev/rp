@@ -1,0 +1,25 @@
+.container {
+    display: flex;
+    min-height: calc(100vh - 60px);
+    /* Height minus header */
+    background-color: var(--background-light);
+}
+
+.sidebar {
+    width: 300px;
+    background-color: var(--sidebar-bg);
+    /* The dark panel in the image */
+    color: var(--sidebar-text);
+    padding: 1.5rem;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: 1.5rem;
+    overflow-y: auto;
+    background-color: #f3f4f6;
+}

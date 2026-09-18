@@ -1,0 +1,175 @@
+.sidebarContent {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.sidebarTitle {
+    color: var(--white);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.sidebarHighlight {
+    background-color: var(--white);
+    padding: 0.75rem;
+    border-radius: 4px;
+    text-align: center;
+    margin-bottom: 0.5rem;
+}
+
+.sidebarHighlight h3 {
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.proceedBtn {
+    width: 100%;
+    margin-bottom: 1.5rem;
+}
+
+.sidebarForm {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.sidebarRow {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.fieldGroup {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.fieldGroup label {
+    font-size: 0.75rem;
+    color: #7d7d91;
+}
+
+.darkInput {
+    background-color: #2b2b3c;
+    border: 1px solid #3e3e4e;
+    color: var(--white);
+    padding: 0.4rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    width: 100%;
+}
+
+.divider {
+    height: 1px;
+    background-color: #3e3e4e;
+    margin: 0.5rem 0;
+}
+
+.infoRow {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #2b2b3c;
+}
+
+.infoRow span:first-child {
+    color: #7d7d91;
+}
+
+.infoRow span:last-child {
+    color: var(--white);
+    font-weight: 500;
+}
+
+.summaryTable {
+    margin-top: 1rem;
+    background-color: #2b2b3c;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.summaryHeader {
+    display: flex;
+    background-color: #3e3e4e;
+    padding: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--white);
+}
+
+.summaryRow {
+    display: flex;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+    color: #a6a6b7;
+    border-bottom: 1px solid #3e3e4e;
+}
+
+.summaryHeader span,
+.summaryRow span {
+    flex: 1;
+}
+
+/* Main Content Styles */
+.mainContainer {
+    background-color: var(--white);
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    min-height: 100%;
+}
+
+.contentArea {
+    padding: 1.5rem;
+}
+
+.sectionHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.required {
+    color: var(--danger);
+}
+
+.descriptionBox {
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    background-color: #f9fafb;
+    border-radius: 4px;
+    margin-bottom: 2rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.formGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+}
+
+.column {
+    display: flex;
+    flex-direction: column;
+}
+
+.row {
+    display: flex;
+    gap: 1rem;
+}
+
+.costGrid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1rem;
+    background-color: #f8fafc;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}

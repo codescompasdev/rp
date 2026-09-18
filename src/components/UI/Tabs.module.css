@@ -1,0 +1,28 @@
+.tabsContainer {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--white);
+    padding: 0 1rem;
+}
+
+.tab {
+    padding: 1rem 1.5rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.95rem;
+}
+
+.tab:hover {
+    color: var(--primary-blue);
+}
+
+.active {
+    color: var(--primary-blue);
+    border-bottom-color: var(--primary-blue);
+    font-weight: 600;
+}
