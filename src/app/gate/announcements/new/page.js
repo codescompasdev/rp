@@ -1,8 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ArrowLeft, Package, Plus } from 'lucide-react';
 import MaterialPicker from '@/components/UI/MaterialPicker';
 import Modal from '@/components/UI/Modal';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
 import api from '@/lib/api';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
 
@@ -17,6 +23,8 @@ export default function NewAnnouncementPage() {
     const [newSupplierName, setNewSupplierName] = useState('');
     const [form, setForm] = useState({ supplierId: '', contractId: '', expectedKg: '', truck: '', expectedDate: '' });
     const [submitError, setSubmitError] = useState('');
+    const [submitOk, setSubmitOk] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
         const load = async () => {
@@ -85,8 +93,10 @@ export default function NewAnnouncementPage() {
             setSubmitError('Dobavljač i materijal su obavezni. Materijal mora postojati u backend katalogu.');
             return;
         }
+        setSubmitting(true);
+        setSubmitOk('');
         try {
-            await api.post('/gate/announcements', {
+            const res = await api.post('/gate/announcements', {
                 supplierId: form.supplierId,
                 contractId: form.contractId || null,
                 materialId: backendMaterial.id,
@@ -96,23 +106,31 @@ export default function NewAnnouncementPage() {
                 status: 'Najavljeno',
             });
             setSubmitError('');
+            setSubmitOk(`Najava ${res?.data?.data?.code || ''} je kreirana.`);
+            setSelectedMaterial(null);
+            setForm((prev) => ({ ...prev, contractId: '', expectedKg: '', truck: '', expectedDate: '' }));
         } catch {
             setSubmitError('Kreiranje najave nije uspjelo. Provjeri podatke i pokušaj ponovo.');
+        } finally {
+            setSubmitting(false);
         }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '800px' }}>
-            <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Nova Najava Prijema</h2>
-            <div className="scada-panel">
-                <div className="scada-header">NAJAVA</div>
-                <div style={{ padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Dobavljač *</label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
+        <div className="ui-page" style={{ maxWidth: 900 }}>
+            <PageHeader
+                title="Nova najava prijema"
+                subtitle="Kada kamion stigne, najava se bira pri vaganju i povezuje tablice, dobavljača i materijal"
+                actions={<Button variant="secondary" icon={ArrowLeft} href="/gate/announcements">Sve najave</Button>}
+            />
+            <Alert tone="success" onClose={() => setSubmitOk('')}>{submitOk}</Alert>
+            <Card>
+                <div className="ui-form-grid">
+                    <Field label="Dobavljač" required>
+                        <div className="ui-input-group">
                             <input
+                                className="ui-input"
                                 list="announcement-suppliers"
-                                style={{ width: '100%', padding: '6px' }}
                                 value={supplierQuery}
                                 onChange={(e) => {
                                     const value = e.target.value;
@@ -120,46 +138,50 @@ export default function NewAnnouncementPage() {
                                     setForm((prev) => ({ ...prev, supplierId: resolveSupplierId(value) }));
                                 }}
                             />
-                            <button type="button" className="btn-primary" onClick={() => setCreateSupplierOpen(true)}>+ Novi</button>
+                            <Button variant="secondary" icon={Plus} onClick={() => setCreateSupplierOpen(true)}>Novi</Button>
                         </div>
                         <datalist id="announcement-suppliers">
                             {suppliers.map((supplier) => <option key={supplier.id} value={supplier.name} />)}
                         </datalist>
-                    </div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Ugovor (Opciono)</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={form.contractId} onChange={(e) => setForm((prev) => ({ ...prev, contractId: e.target.value }))}><option value="">- Bez ugovora (Spot) -</option>{contracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id}</option>)}</select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal *</label><button type="button" style={{ width: '100%', padding: '6px', marginTop: '4px', textAlign: 'left' }} onClick={() => setPickerOpen(true)}>{selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal...'}</button></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Očekivana Količina (KG)</label><input type="number" className="font-mono" style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={form.expectedKg} onChange={(e) => setForm((prev) => ({ ...prev, expectedKg: e.target.value }))} /></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tablice Kamiona</label><input type="text" className="font-mono" style={{ width: '100%', padding: '6px', marginTop: '4px' }} placeholder="E55-K-991" value={form.truck} onChange={(e) => setForm((prev) => ({ ...prev, truck: e.target.value }))} /></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Očekivani Datum</label><input type="date" className="font-mono" style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={form.expectedDate} onChange={(e) => setForm((prev) => ({ ...prev, expectedDate: e.target.value }))} /></div>
+                    </Field>
+                    <Field label="Narudžba (opciono)">
+                        <select className="ui-input" value={form.contractId} onChange={(e) => setForm((prev) => ({ ...prev, contractId: e.target.value }))}>
+                            <option value="">- Bez narudžbe (Spot) -</option>
+                            {contracts.filter((c) => (c.direction || 'BUY') === 'BUY' || c.id === form.contractId).map((contract) => (
+                                <option key={contract.id} value={contract.id}>{contract.code || contract.id} — {contract.supplier?.name || '-'}</option>
+                            ))}
+                        </select>
+                    </Field>
+                    <Field label="Materijal" required span="all">
+                        <button type="button" className="ui-input" style={{ display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer', background: selectedMaterial ? 'var(--primary-50)' : undefined }} onClick={() => setPickerOpen(true)}>
+                            <Package size={16} style={{ color: 'var(--primary)' }} />
+                            <span className={selectedMaterial ? '' : 'muted'}>{selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal...'}</span>
+                        </button>
+                    </Field>
+                    <Field label="Očekivana količina (kg)">
+                        <input type="number" min="0" className="ui-input font-mono" value={form.expectedKg} onChange={(e) => setForm((prev) => ({ ...prev, expectedKg: e.target.value }))} />
+                    </Field>
+                    <Field label="Tablice kamiona">
+                        <input type="text" className="ui-input font-code" placeholder="E55-K-991" value={form.truck} onChange={(e) => setForm((prev) => ({ ...prev, truck: e.target.value }))} />
+                    </Field>
+                    <Field label="Očekivani datum">
+                        <input type="date" className="ui-input" value={form.expectedDate} onChange={(e) => setForm((prev) => ({ ...prev, expectedDate: e.target.value }))} />
+                    </Field>
                 </div>
-            </div>
-            <div style={{ padding: '12px', background: '#eef2ff', border: '1px solid var(--primary-color)', fontSize: '12px' }}>
-                <strong>ℹ️ INFO:</strong> Najava će biti vidljiva portiru na Kapiji. Kada kamion stigne, portir će automatski povezati tablice sa ovom najavom.
-            </div>
-            <div className="responsive-row" style={{ justifyContent: 'flex-end' }}>
-                <button style={{ padding: '10px 24px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                <button className="btn-primary" style={{ padding: '10px 24px' }} onClick={handleCreate}>KREIRAJ NAJAVU</button>
-            </div>
-            {submitError && (
-                <div style={{ padding: '10px 12px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: '12px' }}>
-                    {submitError}
+                {submitError && <Alert tone="danger" style={{ marginTop: 14 }}>{submitError}</Alert>}
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" href="/gate/announcements">Odustani</Button>
+                    <Button onClick={handleCreate} disabled={submitting}>{submitting ? 'Čuvanje...' : 'Kreiraj najavu'}</Button>
                 </div>
-            )}
+            </Card>
             <MaterialPicker open={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={({ material }) => setSelectedMaterial(material)} />
-            <Modal open={createSupplierOpen} onClose={() => setCreateSupplierOpen(false)} title="Novi dobavljač" width={520}>
-                <div style={{ display: 'grid', gap: '10px' }}>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Naziv dobavljača *</label>
-                        <input
-                            value={newSupplierName}
-                            onChange={(e) => setNewSupplierName(e.target.value)}
-                            style={{ width: '100%', padding: '8px', marginTop: '4px' }}
-                        />
-                    </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                    <button type="button" onClick={() => setCreateSupplierOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                    <button type="button" className="btn-primary" onClick={createSupplier} style={{ padding: '8px 16px' }}>Sačuvaj</button>
+            <Modal open={createSupplierOpen} onClose={() => setCreateSupplierOpen(false)} title="Novi dobavljač" width={480} zIndex={3500}>
+                <Field label="Naziv dobavljača" required>
+                    <input className="ui-input" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} autoFocus />
+                </Field>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreateSupplierOpen(false)}>Odustani</Button>
+                    <Button onClick={createSupplier}>Sačuvaj</Button>
                 </div>
             </Modal>
         </div>

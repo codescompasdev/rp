@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Bell, ChevronRight, Download, LogOut, MapPin, Menu } from 'lucide-react';
 import { getCurrentRole, getRoleLabel, setRoleOverride } from '@/lib/userRole';
 import api from '@/lib/api';
 import { clearAuthSession, getActiveCompanyId, getAuthUser, setActiveCompanyId } from '@/lib/authStorage';
@@ -11,6 +14,7 @@ import {
     markAllNotificationsRead,
     markNotificationRead
 } from '@/lib/notifications';
+import { buildBreadcrumb } from './navConfig';
 
 function mergeNotifications(primary, secondary) {
     const map = new Map();
@@ -33,13 +37,17 @@ function formatNotificationTime(value) {
     return date.toLocaleTimeString('sr-RS', { hour: '2-digit', minute: '2-digit' });
 }
 
-const Header = () => {
+function initials(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return 'U';
+    return parts.slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+}
+
+const Header = ({ onOpenMenu }) => {
+    const pathname = usePathname();
     const [showAlerts, setShowAlerts] = useState(false);
     const [role, setRole] = useState('worker');
     const [installPrompt, setInstallPrompt] = useState(null);
-    const [isCompact, setIsCompact] = useState(false);
-    const [isMobile, setIsMobile] = useState(false);
-    const [isTiny, setIsTiny] = useState(false);
     const [locations, setLocations] = useState([]);
     const [selectedLocation, setSelectedLocation] = useState('');
     const [notifications, setNotifications] = useState([]);
@@ -47,24 +55,17 @@ const Header = () => {
     const [pushState, setPushState] = useState({ subscribed: false, reason: null });
     const [socketConnected, setSocketConnected] = useState(false);
     const [socketError, setSocketError] = useState('');
+    const [lmeRows, setLmeRows] = useState([]);
+    const [authUser, setAuthUser] = useState(null);
     const audioContextRef = useRef(null);
-    const authUser = getAuthUser();
+    const popoverRef = useRef(null);
     const isAdminUser = String(authUser?.role || '').toLowerCase() === 'admin';
     const isOwnerRole = role === 'owner';
+    const crumbs = buildBreadcrumb(pathname);
 
     useEffect(() => {
         setRole(getCurrentRole());
-        if (typeof window !== 'undefined') {
-            const onResize = () => {
-                const width = window.innerWidth;
-                setIsCompact(width < 980);
-                setIsMobile(width <= 880);
-                setIsTiny(width <= 520);
-            };
-            onResize();
-            window.addEventListener('resize', onResize);
-            return () => window.removeEventListener('resize', onResize);
-        }
+        setAuthUser(getAuthUser());
     }, []);
 
     useEffect(() => {
@@ -86,6 +87,7 @@ const Header = () => {
 
     useEffect(() => {
         let cancelled = false;
+        const storedUser = getAuthUser();
         const loadLocations = async () => {
             try {
                 const res = await api.get('/locations');
@@ -94,10 +96,13 @@ const Header = () => {
                 setLocations(rows);
 
                 const stored = getActiveCompanyId();
-                const preferred = [stored, authUser?.activeCompanyId, authUser?.companyId].filter(Boolean);
+                const preferred = [stored, storedUser?.activeCompanyId, storedUser?.companyId].filter(Boolean);
                 const validPreferred = preferred.find((id) => rows.some((row) => row.id === id));
-                const fallback = (authUser?.companyId && rows.some((row) => row.id === authUser.companyId))
-                    ? authUser.companyId
+                const isAdmin = String(storedUser?.role || '').toLowerCase() === 'admin';
+                const ownCompanyValid = storedUser?.companyId && rows.some((row) => row.id === storedUser.companyId);
+                // admin zadržava izabranu lokaciju; ostali su uvijek na svojoj
+                const fallback = !isAdmin && ownCompanyValid
+                    ? storedUser.companyId
                     : (validPreferred || rows[0]?.id || '');
                 if (fallback) {
                     setSelectedLocation(fallback);
@@ -111,6 +116,19 @@ const Header = () => {
             }
         };
         loadLocations();
+        return () => { cancelled = true; };
+    }, []);
+
+    // LME cijene samo ako postoje u bazi (nema izmišljenih vrijednosti)
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/market/lme')
+            .then((res) => {
+                if (!cancelled) setLmeRows(Array.isArray(res?.data?.data) ? res.data.data : []);
+            })
+            .catch(() => {
+                if (!cancelled) setLmeRows([]);
+            });
         return () => { cancelled = true; };
     }, []);
 
@@ -232,6 +250,22 @@ const Header = () => {
         return () => { cancelled = true; };
     }, []);
 
+    useEffect(() => {
+        if (!showAlerts) return undefined;
+        const onDown = (event) => {
+            if (popoverRef.current && !popoverRef.current.contains(event.target)) setShowAlerts(false);
+        };
+        const onKey = (event) => {
+            if (event.key === 'Escape') setShowAlerts(false);
+        };
+        window.addEventListener('mousedown', onDown);
+        window.addEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('mousedown', onDown);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [showAlerts]);
+
     const handleInstall = async () => {
         if (!installPrompt) {
             return;
@@ -293,280 +327,165 @@ const Header = () => {
         } catch {}
     };
 
+    const currentLocation = locations.find((location) => location.id === selectedLocation);
+    const userName = authUser?.name || authUser?.email || 'Korisnik';
+
     return (
-        <header style={{
-            height: 'var(--header-height)',
-            backgroundColor: '#0f172a',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: isMobile ? '0 8px' : '0 16px',
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100%',
-            zIndex: 1000,
-            borderBottom: '1px solid #1e293b',
-        }}>
-            {/* Left: Logo + Brand */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', minWidth: 0 }}>
-                <div style={{
-                    width: '28px', height: '28px',
-                    background: '#f59e0b',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 'bold', fontSize: '14px', color: '#0f172a',
-                }}>M</div>
-                <span style={{ fontWeight: '700', fontSize: isMobile ? '12px' : '14px', letterSpacing: '0.08em', color: '#f8fafc', whiteSpace: 'nowrap' }}>
-                    {isTiny ? 'MILKUS' : 'MILKUS ERP'}
-                </span>
-                {!isMobile && (
-                    <span style={{ fontSize: '11px', color: '#475569', borderLeft: '1px solid #334155', paddingLeft: '12px', marginLeft: '4px' }}>
-                        COMPAS CODES
-                    </span>
-                )}
+        <header className="app-header">
+            <div className="hd-left">
+                <button type="button" className="hd-icon-btn hd-menu-btn" onClick={onOpenMenu} aria-label="Otvori meni">
+                    <Menu size={18} />
+                </button>
+                <nav className="hd-crumbs" aria-label="Putanja">
+                    {crumbs.length === 0 && <span className="hd-crumb-current">MILKUS ERP</span>}
+                    {crumbs.map((crumb, index) => {
+                        const isLast = index === crumbs.length - 1;
+                        return (
+                            <Fragment key={`${crumb.label}-${index}`}>
+                                {index > 0 && <ChevronRight className={isLast ? '' : 'hd-crumb-sep'} size={14} />}
+                                {isLast ? (
+                                    <span className="hd-crumb-current" aria-current="page">{crumb.label}</span>
+                                ) : crumb.href ? (
+                                    <Link href={crumb.href} className="hd-crumb-parent">{crumb.label}</Link>
+                                ) : (
+                                    <span className="hd-crumb-parent">{crumb.label}</span>
+                                )}
+                            </Fragment>
+                        );
+                    })}
+                </nav>
             </div>
 
-            {/* Center: LME Ticker */}
-            {!isCompact && <div style={{
-                flex: 1,
-                overflow: 'hidden',
-                margin: '0 24px',
-                position: 'relative',
-                height: '100%',
-                display: 'flex',
-                alignItems: 'center',
-            }}>
-                <div style={{
-                    display: 'flex',
-                    gap: '24px',
-                    fontSize: '11px',
-                    whiteSpace: 'nowrap',
-                    animation: 'tickerScroll 30s linear infinite',
-                }}>
-                    <span>LME Cu: <span style={{ color: '#ef4444' }}>$8,450 ▼-1.2%</span></span>
-                    <span>LME Al: <span style={{ color: '#10b981' }}>$2,180 ▲+0.5%</span></span>
-                    <span>LME Zn: <span style={{ color: '#94a3b8' }}>$2,420 ➖0.0%</span></span>
-                    <span>LME Ni: <span style={{ color: '#10b981' }}>$16,250 ▲+1.8%</span></span>
-                    <span style={{ color: '#94a3b8' }}>│</span>
-                    <span>BAM/EUR: 1.9558</span>
-                    <span>EUR/USD: 1.0842</span>
-                    <span style={{ color: '#94a3b8' }}>│</span>
-                    <span>LME Cu: <span style={{ color: '#ef4444' }}>$8,450 ▼-1.2%</span></span>
-                    <span>LME Al: <span style={{ color: '#10b981' }}>$2,180 ▲+0.5%</span></span>
-                </div>
-            </div>}
+            <div className="hd-right">
+                {lmeRows.length > 0 && (
+                    <div className="hd-ticker" title="LME cijene iz baze">
+                        {lmeRows.slice(0, 4).map((row) => {
+                            const change = Number(row.change || 0);
+                            return (
+                                <span key={row.metal}>
+                                    LME {row.metal}: <b>${Number(row.price || 0).toLocaleString('de-DE')}</b>{' '}
+                                    <span style={{ color: change > 0 ? 'var(--success-ink)' : change < 0 ? 'var(--danger-ink)' : 'var(--text-3)' }}>
+                                        {change > 0 ? '+' : ''}{change}%
+                                    </span>
+                                </span>
+                            );
+                        })}
+                    </div>
+                )}
 
-            {/* Right: Location + Alerts + User */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
-                {
-                    isAdminUser && isOwnerRole
-                        ? (
-                            <select
-                                value={selectedLocation}
-                                onChange={handleLocationChange}
-                                style={{
-                                    background: '#1e293b', color: '#e2e8f0', borderRadius: 30, border: '1px solid #334155',
-                                    padding: '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                                }}
-                            >
-                                {(locations.length ? locations : [{ id: '', code: 'N/A', name: 'No locations' }]).map((location) => (
-                                    <option key={location.id || location.code} value={location.id}>
-                                        {isCompact ? location.code : location.code ? `${location.code} - ${location.name}` : location.name}
-                                    </option>
-                                ))}
-                            </select>
-                        )
-                        : (
-                            <div style={{
-                                background: '#1e293b',
-                                color: '#e2e8f0',
-                                borderRadius: 30,
-                                border: '1px solid #334155',
-                                padding: '4px 10px',
-                                fontSize: '11px',
-                                fontWeight: '600',
-                                whiteSpace: 'nowrap',
-                            }}>
-                                {(locations.find((location) => location.id === selectedLocation)?.code && locations.find((location) => location.id === selectedLocation)?.name)
-                                    ? `${locations.find((location) => location.id === selectedLocation)?.code} - ${locations.find((location) => location.id === selectedLocation)?.name}`
-                                    : 'Lokacija automatski dodijeljena'}
-                            </div>
-                        )
-                }
+                {isAdminUser && isOwnerRole ? (
+                    <select
+                        className="hd-select"
+                        value={selectedLocation}
+                        onChange={handleLocationChange}
+                        aria-label="Lokacija"
+                    >
+                        {(locations.length ? locations : [{ id: '', code: 'N/A', name: 'Nema lokacija' }]).map((location) => (
+                            <option key={location.id || location.code} value={location.id}>
+                                {location.code ? `${location.code} · ${location.name}` : location.name}
+                            </option>
+                        ))}
+                    </select>
+                ) : (
+                    <span className="hd-chip hd-hide-mobile" title="Lokacija">
+                        <MapPin size={14} />
+                        {currentLocation ? `${currentLocation.code} · ${currentLocation.name}` : 'Lokacija automatski dodijeljena'}
+                    </span>
+                )}
 
                 {isAdminUser ? (
-                    <select
-                        value={role}
-                        onChange={handleRoleChange}
-                        style={{
-                            background: '#1e293b', color: '#e2e8f0', borderRadius: 30, border: '1px solid #334155',
-                            padding: isMobile ? '4px 6px' : '4px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', maxWidth: isTiny ? '96px' : 'none',
-                        }}
-                    >
-                        <option value="owner">{isTiny ? 'Vlasnik' : 'Uloga: Vlasnik'}</option>
-                        <option value="worker">{isTiny ? 'Radnik' : 'Uloga: Radnik'}</option>
+                    <select className="hd-select" value={role} onChange={handleRoleChange} aria-label="Uloga">
+                        <option value="owner">Uloga: Vlasnik</option>
+                        <option value="worker">Uloga: Radnik</option>
                     </select>
                 ) : null}
 
-                <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowAlerts(!showAlerts)}>
-                    <span style={{ fontSize: '16px' }}>🔔</span>
-                    {unreadCount > 0 ? (
-                        <span style={{
-                            position: 'absolute', top: '-6px', right: '-8px',
-                            background: '#ef4444', color: 'white', fontSize: '9px',
-                            padding: '1px 4px', fontWeight: 'bold', minWidth: '14px', textAlign: 'center',
-                        }}>{unreadCount}</span>
-                    ) : null}
-                </div>
-
-                <button
-                    type="button"
-                    onClick={handleLogout}
-                    style={{
-                        background: '#7f1d1d',
-                        color: '#fee2e2',
-                        border: '1px solid #b91c1c',
-                        borderRadius: 30,
-                        padding: isTiny ? '4px 6px' : '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    {isTiny ? '⎋' : isMobile ? 'Logout' : 'Odjava'}
-                </button>
-
                 {installPrompt && (
-                    <button
-                        type="button"
-                        onClick={handleInstall}
-                        style={{
-                            background: '#0ea5e9',
-                            color: '#e0f2fe',
-                            border: '1px solid #0284c7',
-                            borderRadius: 30,
-                            padding: isTiny ? '4px 6px' : '4px 10px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {isTiny ? '⬇' : isMobile ? 'Install' : 'Instaliraj App'}
+                    <button type="button" className="ui-btn soft sm hd-hide-mobile" onClick={handleInstall}>
+                        <Download size={14} /> Instaliraj app
                     </button>
                 )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderLeft: '1px solid #334155', paddingLeft: isTiny ? '6px' : '10px' }}>
-                    <div style={{
-                        width: '24px', height: '24px', background: '#334155',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '11px', fontWeight: 'bold', color: '#e2e8f0',
-                    }}>A</div>
-                    <div style={{ lineHeight: '1.2', display: isTiny ? 'none' : 'block' }}>
-                        <div style={{ fontSize: '12px', fontWeight: '600' }}>{isCompact ? 'usr' : 'admin'}</div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>{getRoleLabel(role)}</div>
+                <div ref={popoverRef} style={{ position: 'static' }}>
+                    <button
+                        type="button"
+                        className="hd-icon-btn"
+                        onClick={() => setShowAlerts((prev) => !prev)}
+                        aria-label={`Notifikacije${unreadCount ? ` (${unreadCount} nepročitanih)` : ''}`}
+                        aria-expanded={showAlerts}
+                    >
+                        <Bell size={17} />
+                        {unreadCount > 0 ? <span className="hd-badge">{unreadCount > 99 ? '99+' : unreadCount}</span> : null}
+                    </button>
+
+                    {showAlerts && (
+                        <div className="hd-popover" role="dialog" aria-label="Notifikacije">
+                            <div className="row-between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+                                <div>
+                                    <div style={{ fontWeight: 700, fontSize: 14 }}>Notifikacije</div>
+                                    <div style={{ fontSize: 11.5, color: socketConnected ? 'var(--success-ink)' : 'var(--warning-ink)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: 99, background: socketConnected ? 'var(--success)' : 'var(--warning)' }} />
+                                        {socketConnected ? 'Realtime uključen' : 'Ponovno povezivanje (polling)...'}
+                                    </div>
+                                </div>
+                                {unreadCount > 0 ? (
+                                    <button type="button" className="ui-btn ghost sm" onClick={handleMarkAllRead}>
+                                        Označi sve pročitano
+                                    </button>
+                                ) : null}
+                            </div>
+                            <div style={{ padding: 12, display: 'grid', gap: 8 }}>
+                                {!pushState.subscribed ? (
+                                    <button type="button" className="ui-btn soft sm block" onClick={handleEnablePush}>
+                                        Omogući push notifikacije
+                                    </button>
+                                ) : null}
+                                {!socketConnected && socketError ? (
+                                    <div style={{ fontSize: 11, color: 'var(--danger-ink)' }}>Socket: {socketError}</div>
+                                ) : null}
+                                {notifications.length === 0 ? (
+                                    <div className="ui-empty" style={{ padding: '24px 8px' }}>
+                                        <div className="ui-empty-icon"><Bell size={18} /></div>
+                                        <div className="ui-empty-text">Nema novih notifikacija.</div>
+                                    </div>
+                                ) : notifications.map((item) => (
+                                    <div
+                                        key={item.id}
+                                        style={{
+                                            padding: '10px 12px',
+                                            borderRadius: 10,
+                                            border: '1px solid var(--border)',
+                                            background: item.isRead ? 'var(--surface)' : 'var(--primary-50)',
+                                        }}
+                                    >
+                                        <div className="row-between" style={{ alignItems: 'flex-start' }}>
+                                            <div style={{ fontWeight: 600, fontSize: 12.5 }}>{item.title || 'Notifikacija'}</div>
+                                            <div style={{ color: 'var(--text-3)', fontSize: 11, flexShrink: 0 }}>{formatNotificationTime(item.createdAt)}</div>
+                                        </div>
+                                        <div style={{ color: 'var(--text-2)', fontSize: 12.5, marginTop: 2 }}>{item.message}</div>
+                                        {!item.isRead ? (
+                                            <button type="button" className="ui-btn ghost sm" style={{ marginTop: 6, paddingLeft: 0 }} onClick={() => handleMarkAsRead(item.id)}>
+                                                Označi pročitano
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="hd-user">
+                    <div className="hd-avatar" aria-hidden="true">{initials(userName)}</div>
+                    <div className="hd-user-text">
+                        <div className="hd-user-name">{userName}</div>
+                        <div className="hd-user-role">{getRoleLabel(role)}</div>
                     </div>
+                    <button type="button" className="ui-btn ghost sm icon-only" onClick={handleLogout} aria-label="Odjava" title="Odjava">
+                        <LogOut size={15} />
+                    </button>
                 </div>
             </div>
-
-            <style>{`
-                @keyframes tickerScroll {
-                    0% { transform: translateX(0); }
-                    100% { transform: translateX(-50%); }
-                }
-            `}</style>
-            {showAlerts && (
-                <div style={{
-                    position: 'absolute',
-                    top: 'calc(var(--header-height) - 2px)',
-                    right: '12px',
-                    width: 'min(320px, calc(100vw - 20px))',
-                    background: '#0b1220',
-                    border: '1px solid #334155',
-                    boxShadow: '0 8px 24px rgba(15, 23, 42, 0.45)',
-                    padding: '8px',
-                    zIndex: 1200,
-                }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                        Notifikacije
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                        <div style={{ fontSize: '11px', color: socketConnected ? '#10b981' : '#f59e0b' }}>
-                            {socketConnected ? 'Realtime ukljucen' : 'Realtime reconnect (polling fallback)...'}
-                        </div>
-                        {unreadCount > 0 ? (
-                            <button
-                                type="button"
-                                onClick={handleMarkAllRead}
-                                style={{
-                                    background: '#1e293b',
-                                    border: '1px solid #334155',
-                                    color: '#cbd5e1',
-                                    fontSize: '10px',
-                                    padding: '4px 8px',
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                Oznaci sve procitano
-                            </button>
-                        ) : null}
-                    </div>
-                    {!pushState.subscribed ? (
-                        <button
-                            type="button"
-                            onClick={handleEnablePush}
-                            style={{
-                                width: '100%',
-                                marginBottom: '8px',
-                                background: '#0ea5e9',
-                                border: '1px solid #0284c7',
-                                color: '#e0f2fe',
-                                fontSize: '11px',
-                                padding: '6px 8px',
-                                cursor: 'pointer',
-                            }}
-                        >
-                            Omoguci push notifikacije
-                        </button>
-                    ) : null}
-                    {!socketConnected && socketError ? (
-                        <div style={{ fontSize: '10px', color: '#fda4af', marginBottom: '8px' }}>
-                            Socket: {socketError}
-                        </div>
-                    ) : null}
-                    {notifications.length === 0 ? (
-                        <div style={{ padding: '7px 8px', border: '1px solid #1e293b', color: '#94a3b8', fontSize: '12px' }}>
-                            Nema novih notifikacija.
-                        </div>
-                    ) : notifications.map((item) => (
-                        <div key={item.id} style={{ padding: '7px 8px', border: '1px solid #1e293b', color: '#e2e8f0', fontSize: '12px', marginBottom: '6px', background: item.isRead ? 'transparent' : 'rgba(239, 68, 68, 0.08)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
-                                <div style={{ fontWeight: 700, color: '#f8fafc' }}>{item.title || 'Notifikacija'}</div>
-                                <div style={{ color: '#94a3b8', fontSize: '10px' }}>{formatNotificationTime(item.createdAt)}</div>
-                            </div>
-                            <div style={{ color: '#cbd5e1' }}>{item.message}</div>
-                            {!item.isRead ? (
-                                <button
-                                    type="button"
-                                    onClick={() => handleMarkAsRead(item.id)}
-                                    style={{
-                                        marginTop: '6px',
-                                        background: '#1e293b',
-                                        border: '1px solid #334155',
-                                        color: '#cbd5e1',
-                                        fontSize: '10px',
-                                        padding: '3px 6px',
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    Oznaci procitano
-                                </button>
-                            ) : null}
-                        </div>
-                    ))}
-                </div>
-            )}
         </header>
     );
 };

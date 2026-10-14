@@ -1,21 +1,32 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import api from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft } from 'lucide-react';
 import MaterialPicker from '@/components/UI/MaterialPicker';
-import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import SalesLineItems from '@/components/Sales/SalesLineItems';
+import api from '@/lib/api';
+import { loadStockByMaterial } from '@/lib/stock';
+import { normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
+
+let lineSeq = 0;
+const newLine = () => ({ id: `line-${Date.now()}-${lineSeq += 1}`, material: null, qtyKg: '', pricePerKg: '' });
 
 export default function NewSalesOrderPage() {
+    const router = useRouter();
     const [customers, setCustomers] = useState([]);
     const [materials, setMaterials] = useState([]);
+    const [stockByMaterialId, setStockByMaterialId] = useState(new Map());
     const [pickerOpenFor, setPickerOpenFor] = useState(null);
     const [submitError, setSubmitError] = useState('');
-    const [lineItems, setLineItems] = useState([{ id: crypto.randomUUID(), material: null, qtyKg: '', pricePerKg: '' }]);
-    const [form, setForm] = useState({
-        customerId: '',
-        delivery: 'Domaća Prodaja',
-        parity: 'FCA Pale',
-    });
+    const [saving, setSaving] = useState(false);
+    const [lineItems, setLineItems] = useState(() => [newLine()]);
+    const [form, setForm] = useState({ customerId: '', delivery: 'Domaća Prodaja' });
 
     useEffect(() => {
         api.get('/sourcing/customers').then((res) => {
@@ -26,18 +37,11 @@ export default function NewSalesOrderPage() {
             }
         }).catch(() => setCustomers([]));
         api.get('/materials').then((res) => setMaterials(normalizeApiList(res))).catch(() => setMaterials([]));
+        loadStockByMaterial().then(setStockByMaterialId).catch(() => setStockByMaterialId(new Map()));
     }, []);
 
     const updateLineItem = (id, updates) => {
         setLineItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...updates } : item)));
-    };
-
-    const addLineItem = () => {
-        setLineItems((prev) => [...prev, { id: crypto.randomUUID(), material: null, qtyKg: '', pricePerKg: '' }]);
-    };
-
-    const removeLineItem = (id) => {
-        setLineItems((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev));
     };
 
     const handleCreate = async () => {
@@ -59,6 +63,7 @@ export default function NewSalesOrderPage() {
             return;
         }
 
+        setSaving(true);
         try {
             await api.post('/sales/orders', {
                 customerId: form.customerId,
@@ -66,75 +71,57 @@ export default function NewSalesOrderPage() {
                 status: 'Priprema dokumenata',
                 exportDocs: form.delivery.includes('Izvoz'),
             });
-            setSubmitError('');
-            setLineItems([{ id: crypto.randomUUID(), material: null, qtyKg: '', pricePerKg: '' }]);
-        } catch {
-            setSubmitError('Kreiranje naloga nije uspjelo. Provjeri podatke i pokušaj ponovo.');
+            router.push('/sales');
+        } catch (error) {
+            const message = error?.response?.data?.error || '';
+            setSubmitError(message.startsWith('Insufficient stock') ? 'Nedovoljno stanja na skladištu za jednu od stavki.' : 'Kreiranje naloga nije uspjelo. Provjeri podatke i pokušaj ponovo.');
+            setSaving(false);
         }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '800px' }}>
-            <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Novi Prodajni Nalog</h2>
-            <div className="scada-panel">
-                <div className="scada-header">KUPAC & ROBA</div>
-                <div style={{ padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Kupac *</label><select value={form.customerId} onChange={(e) => setForm((prev) => ({ ...prev, customerId: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Način Isporuke</label><select value={form.delivery} onChange={(e) => setForm((prev) => ({ ...prev, delivery: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>Domaća Prodaja</option><option>Izvoz (EU)</option><option>Izvoz (Non-EU)</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Valuta</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>BAM</option><option>EUR</option><option>USD</option></select></div>
-                </div>
-                <div style={{ padding: '0 16px 16px', display: 'grid', gap: '8px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 700 }}>Stavke narudžbe *</div>
-                    {lineItems.map((item, index) => (
-                        <div key={item.id} style={{ border: '1px solid #e2e8f0', padding: '10px', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '8px', alignItems: 'end' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal #{index + 1}</label>
-                                <button type="button" onClick={() => setPickerOpenFor(item.id)} style={{ width: '100%', padding: '6px', marginTop: '4px', textAlign: 'left' }}>
-                                    {item.material ? formatPickedMaterial(item.material) : 'Odaberi materijal...'}
-                                </button>
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Količina (KG)</label>
-                                <input type="number" className="font-mono" value={item.qtyKg} onChange={(e) => updateLineItem(item.id, { qtyKg: e.target.value })} style={{ width: '100%', padding: '6px', marginTop: '4px' }} />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Cijena (BAM/KG)</label>
-                                <input type="number" className="font-mono" value={item.pricePerKg} onChange={(e) => updateLineItem(item.id, { pricePerKg: e.target.value })} style={{ width: '100%', padding: '6px', marginTop: '4px' }} />
-                            </div>
-                            <button type="button" onClick={() => removeLineItem(item.id)} style={{ padding: '6px 10px' }}>Ukloni</button>
-                        </div>
-                    ))}
+        <div className="ui-page" style={{ maxWidth: 1000 }}>
+            <PageHeader
+                title="Novi prodajni nalog"
+                subtitle="Roba se skida sa stanja odmah pri kreiranju naloga"
+                actions={<Button variant="secondary" icon={ArrowLeft} href="/sales">Svi nalozi</Button>}
+            />
+            <Card>
+                <div className="stack" style={{ gap: 18 }}>
+                    <div className="ui-form-grid">
+                        <Field label="Kupac" required>
+                            <select className="ui-input" value={form.customerId} onChange={(e) => setForm((prev) => ({ ...prev, customerId: e.target.value }))}>
+                                {!customers.length && <option value="">Nema kupaca</option>}
+                                {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                            </select>
+                        </Field>
+                        <Field label="Način isporuke">
+                            <select className="ui-input" value={form.delivery} onChange={(e) => setForm((prev) => ({ ...prev, delivery: e.target.value }))}>
+                                <option value="Domaća Prodaja">Domaća prodaja</option>
+                                <option value="Izvoz (EU)">Izvoz (EU)</option>
+                                <option value="Izvoz (Non-EU)">Izvoz (Non-EU)</option>
+                            </select>
+                        </Field>
+                    </div>
                     <div>
-                        <button type="button" className="btn-primary" style={{ padding: '6px 12px' }} onClick={addLineItem}>
-                            + Dodaj materijal
-                        </button>
+                        <div className="ui-section-title">Stavke naloga</div>
+                        <SalesLineItems
+                            lineItems={lineItems}
+                            materials={materials}
+                            stockByMaterialId={stockByMaterialId}
+                            onUpdate={updateLineItem}
+                            onAdd={() => setLineItems((prev) => [...prev, newLine()])}
+                            onRemove={(id) => setLineItems((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev))}
+                            onPickMaterial={setPickerOpenFor}
+                        />
                     </div>
+                    {submitError && <Alert tone="danger">{submitError}</Alert>}
                 </div>
-            </div>
-            <div className="scada-panel">
-                <div className="scada-header" style={{ background: '#475569' }}>TRANSPORT & DOKUMENTI</div>
-                <div style={{ padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Paritet</label><select value={form.parity} onChange={(e) => setForm((prev) => ({ ...prev, parity: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>FCA Pale</option><option>DAP (Mi dostavljamo)</option><option>CIF</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Potrebni Dokumenti</label>
-                        <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-                            <label><input type="checkbox" defaultChecked /> Faktura</label>
-                            <label><input type="checkbox" /> CMR (Tovarni list)</label>
-                            <label><input type="checkbox" /> EUR1 (Porijeklo)</label>
-                            <label><input type="checkbox" /> Annex VII</label>
-                            <label><input type="checkbox" /> Loading Report</label>
-                        </div>
-                    </div>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" href="/sales">Odustani</Button>
+                    <Button onClick={handleCreate} disabled={saving}>{saving ? 'Čuvanje...' : 'Kreiraj nalog'}</Button>
                 </div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button style={{ padding: '10px 24px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                <button className="btn-primary" style={{ padding: '10px 24px' }} onClick={handleCreate}>KREIRAJ NALOG</button>
-            </div>
-            {submitError && (
-                <div style={{ padding: '10px 12px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: '12px' }}>
-                    {submitError}
-                </div>
-            )}
+            </Card>
             <MaterialPicker
                 open={Boolean(pickerOpenFor)}
                 onClose={() => setPickerOpenFor(null)}

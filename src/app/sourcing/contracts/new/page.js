@@ -1,14 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import MaterialPicker from '@/components/UI/MaterialPicker';
 import Modal from '@/components/UI/Modal';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import OrderFormFields from '@/components/Orders/OrderFormFields';
 import api from '@/lib/api';
+import { buildFormula } from '@/lib/orders';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
-
-const LABEL = { fontSize: '11px', fontWeight: 700 };
-const INPUT = { width: '100%', padding: '6px', marginTop: '4px' };
-const GRID = { padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' };
 
 const EMPTY_FORM = {
     direction: 'BUY',
@@ -72,6 +76,12 @@ export default function NewOrderPage() {
         if (byId) return byId.id;
         const byName = partners.find((p) => String(p.name || '').trim().toLowerCase() === normalized);
         return byName?.id || '';
+    };
+
+    const handlePartnerQueryChange = (value, opts = {}) => {
+        setPartnerQuery(value);
+        if (opts.reset) return;
+        setForm((prev) => ({ ...prev, partnerId: resolvePartnerId(value) }));
     };
 
     const createPartner = async () => {
@@ -143,7 +153,6 @@ export default function NewOrderPage() {
         }
         setSubmitting(true);
         try {
-            const formulaValue = String(form.formulaValue || '').replace('%', '').trim();
             const res = await api.post('/sourcing/contracts', {
                 direction: form.direction,
                 partnerId: form.partnerId,
@@ -154,7 +163,7 @@ export default function NewOrderPage() {
                 qtyMode: form.qtyMode,
                 totalQtyKg: form.qtyMode === 'TOTAL' ? Number(form.totalQtyKg) : null,
                 tolerance: form.tolerance,
-                formula: form.formula === 'LME' ? `LME -${formulaValue}%` : `Fiksno ${formulaValue}`,
+                formula: buildFormula(form.formula, form.formulaValue),
                 paymentTerms: form.paymentTerms,
                 period: form.startDate && form.endDate ? `${form.startDate} - ${form.endDate}` : 'Spot',
                 status: 'Aktivan',
@@ -172,140 +181,36 @@ export default function NewOrderPage() {
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '800px' }}>
-            <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Nova Narudžba</h2>
+        <div className="ui-page" style={{ maxWidth: 960 }}>
+            <PageHeader
+                title="Nova narudžba"
+                subtitle="Nabavka od dobavljača ili prodaja kupcu, sa jednim ili više materijala"
+                actions={<Button variant="secondary" icon={ArrowLeft} href="/sourcing/contracts">Sve narudžbe</Button>}
+            />
 
-            <div className="scada-panel">
-                <div className="scada-header">STRANE NARUDŽBE</div>
-                <div style={GRID}>
-                    <div>
-                        <label style={LABEL}>Vrsta narudžbe</label>
-                        <select
-                            style={INPUT}
-                            value={form.direction}
-                            onChange={(e) => {
-                                setForm((prev) => ({ ...prev, direction: e.target.value, partnerId: '' }));
-                                setPartnerQuery('');
-                            }}
-                        >
-                            <option value="BUY">Nabavka (mi kupujemo)</option>
-                            <option value="SELL">Prodaja (mi prodajemo)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style={LABEL}>{isBuy ? 'Dobavljač *' : 'Kupac *'}</label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                            <input
-                                list="order-partners"
-                                value={partnerQuery}
-                                onChange={(e) => {
-                                    const value = e.target.value;
-                                    setPartnerQuery(value);
-                                    setForm((prev) => ({ ...prev, partnerId: resolvePartnerId(value) }));
-                                }}
-                                style={{ width: '100%', padding: '6px' }}
-                            />
-                            <button type="button" className="btn-primary" onClick={() => setCreatePartnerOpen(true)}>+ Novi</button>
-                        </div>
-                        <datalist id="order-partners">
-                            {partners.map((p) => <option key={p.id} value={p.name} />)}
-                        </datalist>
-                    </div>
+            {submitOk && <Alert tone="success" onClose={() => setSubmitOk('')}>{submitOk}</Alert>}
+
+            <Card>
+                <OrderFormFields
+                    form={form}
+                    setForm={setForm}
+                    items={items}
+                    setItems={setItems}
+                    partners={partners}
+                    partnerQuery={partnerQuery}
+                    onPartnerQueryChange={handlePartnerQueryChange}
+                    onOpenMaterialPicker={() => setPickerOpen(true)}
+                    onOpenCreatePartner={() => setCreatePartnerOpen(true)}
+                    error={submitError}
+                    datalistId="order-partners"
+                />
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={resetForm}>Očisti formu</Button>
+                    <Button onClick={handleCreate} disabled={submitting}>
+                        {submitting ? 'Čuvanje...' : 'Kreiraj narudžbu'}
+                    </Button>
                 </div>
-            </div>
-
-            <div className="scada-panel">
-                <div className="scada-header" style={{ background: '#475569' }}>ROBA & CIJENA</div>
-                <div style={GRID}>
-                    <div style={{ gridColumn: '1 / -1' }}>
-                        <label style={LABEL}>Način zadavanja količine</label>
-                        <select style={INPUT} value={form.qtyMode} onChange={(e) => setForm((p) => ({ ...p, qtyMode: e.target.value }))}>
-                            <option value="PER_MATERIAL">Količina po materijalu</option>
-                            <option value="TOTAL">Ukupna količina cijele narudžbe</option>
-                        </select>
-                    </div>
-
-                    {form.qtyMode === 'TOTAL' && (
-                        <div>
-                            <label style={LABEL}>Ukupno (kg) *</label>
-                            <input type="number" className="font-mono" style={INPUT} value={form.totalQtyKg}
-                                onChange={(e) => setForm((p) => ({ ...p, totalQtyKg: e.target.value }))} />
-                        </div>
-                    )}
-
-                    <div style={{ gridColumn: '1 / -1' }}>
-                        <label style={LABEL}>Materijali *</label>
-                        {items.map((it, idx) => (
-                            <div key={it.materialId} style={{ display: 'grid', gridTemplateColumns: '1fr 140px auto', gap: '6px', marginTop: '4px' }}>
-                                <div style={{ padding: '6px', border: '1px solid var(--border-color)' }}>{it.label}</div>
-                                {form.qtyMode === 'PER_MATERIAL' ? (
-                                    <input type="number" className="font-mono" placeholder="kg" value={it.qtyKg} style={{ padding: '6px' }}
-                                        onChange={(e) => setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyKg: e.target.value } : x)))} />
-                                ) : <div />}
-                                <button type="button" onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
-                            </div>
-                        ))}
-                        {!items.length && <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Nema dodanih materijala.</div>}
-                        <button type="button" className="btn-primary" style={{ marginTop: '8px' }} onClick={() => setPickerOpen(true)}>+ Dodaj materijal</button>
-                    </div>
-
-                    <div>
-                        <label style={LABEL}>Tolerancija (%)</label>
-                        <input type="number" className="font-mono" style={INPUT} value={form.tolerance}
-                            onChange={(e) => setForm((p) => ({ ...p, tolerance: e.target.value }))} />
-                    </div>
-                    <div>
-                        <label style={LABEL}>Formula Cijene *</label>
-                        <select style={INPUT} value={form.formula} onChange={(e) => setForm((p) => ({ ...p, formula: e.target.value }))}>
-                            <option value="LME">LME Cash Settlement - X%</option>
-                            <option value="Fiksno">Fiksna Cijena (BAM/KG)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style={LABEL}>Odbitak / Fiksno</label>
-                        <input type="text" className="font-mono" style={INPUT} placeholder="15 ili 0.30" value={form.formulaValue}
-                            onChange={(e) => setForm((p) => ({ ...p, formulaValue: e.target.value }))} />
-                    </div>
-                </div>
-            </div>
-
-            <div className="scada-panel">
-                <div className="scada-header" style={{ background: '#475569' }}>ISPORUKA & PERIOD</div>
-                <div style={GRID}>
-                    <div>
-                        <label style={LABEL}>Paritet *</label>
-                        <select style={INPUT} value={form.paymentTerms} onChange={(e) => setForm((p) => ({ ...p, paymentTerms: e.target.value }))}>
-                            <option value="DAP">DAP Pale (Oni dovoze)</option>
-                            <option value="EXW">EXW (Mi kupimo)</option>
-                            <option value="FCA">FCA</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label style={LABEL}>Početak</label>
-                        <input type="date" className="font-mono" style={INPUT} value={form.startDate}
-                            onChange={(e) => setForm((p) => ({ ...p, startDate: e.target.value }))} />
-                    </div>
-                    <div>
-                        <label style={LABEL}>Kraj</label>
-                        <input type="date" className="font-mono" style={INPUT} value={form.endDate}
-                            onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))} />
-                    </div>
-                </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button type="button" onClick={resetForm} style={{ padding: '10px 24px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                <button type="button" className="btn-primary" style={{ padding: '10px 24px' }} onClick={handleCreate} disabled={submitting}>
-                    {submitting ? 'ČUVANJE...' : 'KREIRAJ NARUDŽBU'}
-                </button>
-            </div>
-
-            {submitOk && (
-                <div style={{ padding: '10px 12px', border: '1px solid #86efac', background: '#f0fdf4', color: '#166534', fontSize: '12px' }}>{submitOk}</div>
-            )}
-            {submitError && (
-                <div style={{ padding: '10px 12px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: '12px' }}>{submitError}</div>
-            )}
+            </Card>
 
             <MaterialPicker
                 open={pickerOpen}
@@ -313,16 +218,13 @@ export default function NewOrderPage() {
                 onSelect={({ material }) => { addMaterial(material); setPickerOpen(false); }}
             />
 
-            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title={isBuy ? 'Novi dobavljač' : 'Novi kupac'} width={520}>
-                <div style={{ display: 'grid', gap: '10px' }}>
-                    <div>
-                        <label style={LABEL}>{isBuy ? 'Naziv dobavljača *' : 'Naziv kupca *'}</label>
-                        <input value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} style={{ width: '100%', padding: '8px', marginTop: '4px' }} />
-                    </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                    <button type="button" onClick={() => setCreatePartnerOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                    <button type="button" className="btn-primary" onClick={createPartner} style={{ padding: '8px 16px' }}>Sačuvaj</button>
+            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title={isBuy ? 'Novi dobavljač' : 'Novi kupac'} width={480} zIndex={3500}>
+                <Field label={isBuy ? 'Naziv dobavljača' : 'Naziv kupca'} required>
+                    <input className="ui-input" value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} autoFocus />
+                </Field>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreatePartnerOpen(false)}>Odustani</Button>
+                    <Button onClick={createPartner}>Sačuvaj</Button>
                 </div>
             </Modal>
         </div>

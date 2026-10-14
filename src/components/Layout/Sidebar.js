@@ -3,166 +3,87 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { getCurrentRole } from '@/lib/userRole';
+import { findActiveNav, visibleNavGroups } from './navConfig';
 
-const menuGroups = [
-    {
-        title: 'VLASNIK PREGLED',
-        icon: '◈',
-        roles: ['owner'],
-        items: [
-            { name: 'Pregled poslovanja', path: '/dashboard' },
-            { name: 'Analitika ulaz/izlaz', path: '/reports' },
-        ]
-    },
-    {
-        title: 'ULAZ I VAGA',
-        icon: '⚖',
-        roles: ['owner', 'worker'],
-        items: [
-            { name: 'Vaganje', path: '/gate' },
-            { name: 'Direktan otkup', path: '/gate/walk-in' },
-            { name: 'Narudžbe / najave', path: '/gate/announcements' },
-            { name: 'Configure vage', path: '/gate/configure', roles: ['owner'] },
-        ]
-    },
-    {
-        title: 'STANJE I ANALIZA',
-        icon: '⬡',
-        roles: ['owner', 'worker'],
-        items: [
-            { name: 'Materijali (Katalog i Stanje)', path: '/inventory' },
-            { name: 'Analiza i knjiženje', path: '/inventory/transactions' },
-        ]
-    },
-    {
-        title: 'NABAVA',
-        icon: '⛁',
-        roles: ['owner', 'worker'],
-        items: [
-            { name: 'Dobavljači', path: '/sourcing/suppliers' },
-            { name: 'Ugovori', path: '/sourcing/contracts' },
-        ]
-    },
-    {
-        title: 'IZLAZ ROBE',
-        icon: '▶',
-        roles: ['owner'],
-        items: [
-            { name: 'Prodaja i izdavanje', path: '/sales' },
-        ]
-    },
-    {
-        title: 'SISTEM',
-        icon: '⚙',
-        roles: ['owner'],
-        items: [
-            { name: 'Korisnici', path: '/system/users' },
-            { name: 'Kontakt poruke', path: '/system/messages' },
-        ]
-    },
-];
+const GROUPS_KEY = 'sidebar-closed-groups';
 
-const Sidebar = () => {
+function readClosedGroups() {
+    try {
+        return JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}') || {};
+    } catch {
+        return {};
+    }
+}
+
+export default function Sidebar({ collapsed, onToggleCollapsed, onNavigate }) {
     const pathname = usePathname();
-    const [collapsed, setCollapsed] = useState({});
     const [role, setRole] = useState('worker');
-    const [isMobile, setIsMobile] = useState(false);
-    const [mobileOpen, setMobileOpen] = useState(false);
+    const [closedGroups, setClosedGroups] = useState({});
 
     useEffect(() => {
         setRole(getCurrentRole());
+        setClosedGroups(readClosedGroups());
     }, []);
 
-    useEffect(() => {
-        if (typeof window === 'undefined') {
-            return;
-        }
+    const groups = useMemo(() => visibleNavGroups(role), [role]);
+    const active = findActiveNav(pathname);
 
-        const onResize = () => setIsMobile(window.innerWidth <= 880);
-        onResize();
-        window.addEventListener('resize', onResize);
-        return () => window.removeEventListener('resize', onResize);
-    }, []);
-
-    useEffect(() => {
-        if (isMobile) {
-            setMobileOpen(false);
-        }
-    }, [pathname, isMobile]);
-
-    const visibleGroups = useMemo(() => {
-        return menuGroups
-            .filter((group) => !group.roles || group.roles.includes(role))
-            .map((group) => ({
-                ...group,
-                items: group.items.filter((item) => !item.roles || item.roles.includes(role)),
-            }))
-            .filter((group) => group.items.length > 0);
-    }, [role]);
-
-    const toggleGroup = (title) => {
-        setCollapsed(prev => ({ ...prev, [title]: !prev[title] }));
+    const toggleGroup = (id) => {
+        setClosedGroups((prev) => {
+            const next = { ...prev, [id]: !prev[id] };
+            try { localStorage.setItem(GROUPS_KEY, JSON.stringify(next)); } catch {}
+            return next;
+        });
     };
 
     return (
-        <aside className={`app-sidebar ${isMobile ? 'is-mobile' : ''} ${mobileOpen ? 'open' : ''}`}>
-            {isMobile && (
-                <button
-                    type="button"
-                    className="app-mobile-menu-trigger"
-                    onClick={() => setMobileOpen((prev) => !prev)}
-                >
-                    <span>☰ Meni</span>
-                    <span>{mobileOpen ? 'Zatvori' : 'Otvori'}</span>
-                </button>
-            )}
-            <div className="app-sidebar-scroll">
-                {visibleGroups.map((group) => {
-                    const isCollapsed = collapsed[group.title];
-                    const hasActive = group.items.some(item =>
-                        pathname === item.path || (item.path !== '/' && pathname?.startsWith(item.path))
-                    );
+        <aside className="app-sidebar" aria-label="Glavna navigacija">
+            <div className="sb-brand">
+                <div className="sb-logo" aria-hidden="true">M</div>
+                <div className="sb-brand-text">
+                    <div className="sb-brand-name">MILKUS ERP</div>
+                    <div className="sb-brand-sub">Compas Codes</div>
+                </div>
+            </div>
 
+            <nav className="sb-scroll">
+                {groups.map((group) => {
+                    // u sažetom prikazu sve grupe su otvorene (vide se samo ikone)
+                    const isOpen = collapsed ? true : !closedGroups[group.id];
+                    const groupActive = active?.group.id === group.id;
+                    const listId = `sb-group-${group.id}`;
                     return (
-                        <div key={group.title} style={{ marginBottom: '2px' }}>
-                            <div
-                                onClick={() => toggleGroup(group.title)}
-                                style={{
-                                    padding: '6px 12px',
-                                    fontSize: '10px',
-                                    fontWeight: '700',
-                                    color: hasActive ? 'var(--primary-color)' : '#94a3b8',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.06em',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    userSelect: 'none',
-                                }}
+                        <div className="sb-group" key={group.id}>
+                            <button
+                                type="button"
+                                className="sb-group-btn"
+                                data-active={groupActive}
+                                aria-expanded={isOpen}
+                                aria-controls={listId}
+                                onClick={() => !collapsed && toggleGroup(group.id)}
+                                tabIndex={collapsed ? -1 : 0}
                             >
-                                <span><span style={{ marginRight: '6px' }}>{group.icon}</span>{group.title}</span>
-                                <span style={{ fontSize: '8px', color: '#94a3b8', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▼</span>
-                            </div>
-                            {!isCollapsed && (
-                                <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
+                                <span className="sb-group-label">{group.title}</span>
+                                <ChevronDown className="sb-chevron" size={14} strokeWidth={2} />
+                            </button>
+                            {isOpen && (
+                                <ul className="sb-items" id={listId}>
                                     {group.items.map((item) => {
-                                        const isActive = pathname === item.path || (item.path !== '/' && pathname?.startsWith(item.path));
+                                        const Icon = item.icon;
+                                        const isActive = active?.item.path === item.path;
                                         return (
                                             <li key={item.path}>
-                                                <Link href={item.path} onClick={() => isMobile && setMobileOpen(false)} style={{
-                                                    display: 'block',
-                                                    padding: '5px 12px 5px 28px',
-                                                    color: isActive ? 'var(--primary-color)' : '#475569',
-                                                    backgroundColor: isActive ? '#f1f5f9' : 'transparent',
-                                                    borderLeft: isActive ? '3px solid var(--primary-color)' : '3px solid transparent',
-                                                    fontWeight: isActive ? '600' : '400',
-                                                    fontSize: '12px',
-                                                    textDecoration: 'none',
-                                                    transition: 'background 0.1s',
-                                                }}>
-                                                    {item.name}
+                                                <Link
+                                                    href={item.path}
+                                                    className="sb-link"
+                                                    aria-current={isActive ? 'page' : undefined}
+                                                    title={collapsed ? item.name : undefined}
+                                                    onClick={onNavigate}
+                                                >
+                                                    <Icon size={18} strokeWidth={1.9} aria-hidden="true" />
+                                                    <span className="sb-link-label">{item.name}</span>
                                                 </Link>
                                             </li>
                                         );
@@ -172,9 +93,20 @@ const Sidebar = () => {
                         </div>
                     );
                 })}
+            </nav>
+
+            <div className="sb-footer">
+                <button
+                    type="button"
+                    className="sb-collapse-btn"
+                    onClick={onToggleCollapsed}
+                    aria-label={collapsed ? 'Proširi meni' : 'Sažmi meni'}
+                    title={collapsed ? 'Proširi meni' : undefined}
+                >
+                    {collapsed ? <PanelLeftOpen size={18} strokeWidth={1.9} /> : <PanelLeftClose size={18} strokeWidth={1.9} />}
+                    <span className="sb-collapse-label">Sažmi meni</span>
+                </button>
             </div>
         </aside>
     );
-};
-
-export default Sidebar;
+}

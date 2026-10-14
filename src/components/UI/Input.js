@@ -1,18 +1,19 @@
-import styles from './Input.module.css';
+import Field from './Field';
 
-const Input = ({ label, type = 'text', value, onChange, name, placeholder, required = false }) => {
+const Input = ({ label, type = 'text', value, onChange, name, placeholder, required = false, ...rest }) => {
     return (
-        <div className={styles.wrapper}>
-            {label && <label className={styles.label}>{label} {required && <span className={styles.required}>*</span>}</label>}
+        <Field label={label} required={required} style={{ marginBottom: 14 }}>
             <input
                 type={type}
                 name={name}
                 value={value}
                 onChange={onChange}
-                className={styles.input}
+                className="ui-input"
                 placeholder={placeholder}
+                required={required}
+                {...rest}
             />
-        </div>
+        </Field>
     );
 };
 

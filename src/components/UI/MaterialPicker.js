@@ -1,11 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { PackageSearch, Plus } from 'lucide-react';
 import Modal from '@/components/UI/Modal';
+import SearchInput from '@/components/UI/SearchInput';
+import Field from '@/components/UI/Field';
+import Button from '@/components/UI/Button';
+import Alert from '@/components/UI/Alert';
+import EmptyState from '@/components/UI/EmptyState';
 import api from '@/lib/api';
+import { fmtNum } from '@/lib/format';
 import { normalizeApiList } from '@/lib/materialsAdapter';
-
-const INPUT_STYLE = { width: '100%', padding: '8px 10px', marginTop: '4px' };
 
 export default function MaterialPicker({ open, onClose, onSelect, onMaterialCreated }) {
     const [search, setSearch] = useState('');
@@ -170,86 +175,104 @@ export default function MaterialPicker({ open, onClose, onSelect, onMaterialCrea
     if (!open) return null;
 
     return (
-        <Modal open={open} onClose={onClose} title="Odaberi materijal" width={600} zIndex={1500}>
-            <div style={{ marginBottom: '12px' }}>
-                <input
-                    type="text"
-                    placeholder="Pretraga: šifra, materijal, podmaterijal..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    style={INPUT_STYLE}
-                    autoFocus
-                />
-            </div>
-            <div style={{ marginBottom: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                Prikazuju se svi proizvodi iz kataloga sa osnovnim podacima.
-            </div>
-            <div style={{ marginBottom: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>Stavki: {filtered.length}</div>
-            <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid var(--border-color)' }}>
+        <Modal open={open} onClose={onClose} title="Odaberi materijal" subtitle={`${filtered.length} stavki u katalogu`} width={640} zIndex={3500}>
+            <SearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="Pretraga: šifra, materijal, kategorija..."
+                autoFocus
+            />
+            <div style={{ marginTop: 12, maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 {filtered.map((item) => (
-                    <div
+                    <button
+                        type="button"
                         key={item.id}
-                        style={{ borderBottom: '1px solid #f1f5f9', padding: '10px 12px', cursor: 'pointer' }}
+                        className="mp-row"
                         onClick={() => handleSelect(item)}
                     >
-                        <div className="font-mono" style={{ fontWeight: 700, color: 'var(--primary-color)', marginBottom: '2px' }}>{item.code}</div>
-                        <div style={{ fontWeight: 600, fontSize: '12px' }}>{item.materialName} / {item.name}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                            {item.categoryName} - {item.subcategoryName}
-                        </div>
-                        <div className="font-mono" style={{ fontSize: '11px', color: '#0f766e', marginTop: '2px' }}>
-                            Otkupna cijena: {Number(item.buyPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BAM/{item.unit || 'KG'}
-                        </div>
-                    </div>
+                        <span className="mp-code">{item.code}</span>
+                        <span style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
+                            <span style={{ display: 'block', fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
+                                {item.materialName}{item.name && item.name !== item.materialName ? ` / ${item.name}` : ''}
+                            </span>
+                            <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
+                                {item.categoryName} · {item.subcategoryName}
+                            </span>
+                        </span>
+                        <span className="font-mono" style={{ fontSize: 12, color: 'var(--success-ink)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            {fmtNum(item.buyPrice, 2)} KM/{item.unit || 'KG'}
+                        </span>
+                    </button>
                 ))}
                 {filtered.length === 0 && (
-                    <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', display: 'grid', gap: '8px', justifyItems: 'center' }}>
-                        <div>Nema rezultata za "{search}".</div>
-                        <button type="button" className="btn-primary" style={{ padding: '7px 12px' }} onClick={handleOpenCreate}>
-                            + Dodaj novi materijal
-                        </button>
-                    </div>
+                    <EmptyState
+                        icon={PackageSearch}
+                        title={`Nema rezultata za "${search}"`}
+                        text="Materijal ne postoji u katalogu. Možeš ga odmah dodati."
+                        action={<Button variant="soft" icon={Plus} onClick={handleOpenCreate}>Dodaj novi materijal</Button>}
+                    />
                 )}
             </div>
             {createOpen && (
-                <div style={{ marginTop: '12px', border: '1px solid var(--border-color)', padding: '12px', borderRadius: '6px', background: '#f8fafc' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '8px' }}>Novi materijal</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Šifra *</label>
-                            <input value={newMaterial.code} onChange={(e) => setNewMaterial((prev) => ({ ...prev, code: e.target.value }))} style={INPUT_STYLE} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Naziv *</label>
-                            <input value={newMaterial.name} onChange={(e) => setNewMaterial((prev) => ({ ...prev, name: e.target.value }))} style={INPUT_STYLE} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Kategorija *</label>
-                            <input value={newMaterial.category} onChange={(e) => setNewMaterial((prev) => ({ ...prev, category: e.target.value }))} placeholder="npr. Obojeni / Bakar" style={INPUT_STYLE} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Jedinica</label>
-                            <select value={newMaterial.baseUnit} onChange={(e) => setNewMaterial((prev) => ({ ...prev, baseUnit: e.target.value }))} style={INPUT_STYLE}>
+                <div style={{ marginTop: 14, border: '1px solid var(--border)', padding: 16, borderRadius: 'var(--radius-lg)', background: 'var(--surface-2)' }}>
+                    <div className="ui-section-title">Novi materijal</div>
+                    <div className="ui-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                        <Field label="Šifra" required>
+                            <input className="ui-input" value={newMaterial.code} onChange={(e) => setNewMaterial((prev) => ({ ...prev, code: e.target.value }))} />
+                        </Field>
+                        <Field label="Naziv" required>
+                            <input className="ui-input" value={newMaterial.name} onChange={(e) => setNewMaterial((prev) => ({ ...prev, name: e.target.value }))} />
+                        </Field>
+                        <Field label="Kategorija" required>
+                            <input className="ui-input" value={newMaterial.category} onChange={(e) => setNewMaterial((prev) => ({ ...prev, category: e.target.value }))} placeholder="npr. Obojeni / Bakar" />
+                        </Field>
+                        <Field label="Jedinica">
+                            <select className="ui-input" value={newMaterial.baseUnit} onChange={(e) => setNewMaterial((prev) => ({ ...prev, baseUnit: e.target.value }))}>
                                 <option value="KG">KG</option>
                                 <option value="KOM">KOM</option>
                             </select>
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 600 }}>Otkupna cijena (BAM/KG)</label>
-                            <input type="number" value={newMaterial.buyPrice} onChange={(e) => setNewMaterial((prev) => ({ ...prev, buyPrice: e.target.value }))} style={INPUT_STYLE} />
-                        </div>
+                        </Field>
+                        <Field label="Otkupna cijena (KM/KG)">
+                            <input type="number" className="ui-input" value={newMaterial.buyPrice} onChange={(e) => setNewMaterial((prev) => ({ ...prev, buyPrice: e.target.value }))} />
+                        </Field>
                     </div>
-                    {createError && (
-                        <div style={{ marginTop: '8px', color: '#b91c1c', fontSize: '11px' }}>{createError}</div>
-                    )}
-                    <div style={{ marginTop: '10px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button type="button" style={{ padding: '6px 12px', border: '1px solid var(--border-color)', background: '#fff' }} onClick={() => setCreateOpen(false)}>Odustani</button>
-                        <button type="button" className="btn-primary" style={{ padding: '6px 12px' }} onClick={handleCreateMaterial} disabled={createLoading}>
+                    {createError && <Alert tone="danger" style={{ marginTop: 12 }}>{createError}</Alert>}
+                    <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+                        <Button variant="secondary" onClick={() => setCreateOpen(false)}>Odustani</Button>
+                        <Button onClick={handleCreateMaterial} disabled={createLoading}>
                             {createLoading ? 'Snimam...' : 'Sačuvaj materijal'}
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
+            <style>{`
+                .mp-row {
+                    width: 100%;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 11px 14px;
+                    border: none;
+                    border-bottom: 1px solid var(--border);
+                    border-radius: 0;
+                    background: var(--surface);
+                    text-align: left;
+                }
+                .mp-row:last-child { border-bottom: none; }
+                .mp-row:hover:not(:disabled) { background: var(--primary-50); }
+                .mp-code {
+                    min-width: 92px;
+                    font-family: var(--font-code);
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: var(--primary-ink);
+                    background: var(--primary-50);
+                    border-radius: 6px;
+                    padding: 3px 8px;
+                    text-align: center;
+                    white-space: nowrap;
+                }
+            `}</style>
         </Modal>
     );
 }

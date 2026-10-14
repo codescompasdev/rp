@@ -53,7 +53,7 @@ export default function RegisterPage() {
     };
 
     return (
-        <div className={styles.authContainer}>
+        <div className={styles.authSimple}>
             <div className={styles.authCard}>
                 <h1 className={styles.title}>Registracija</h1>
                 <p className={styles.subtitle}>Kreirajte novi račun.</p>

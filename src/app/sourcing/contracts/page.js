@@ -1,12 +1,37 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, ClipboardList, Eye, Pencil, Plus } from 'lucide-react';
 import Modal from '@/components/UI/Modal';
 import MaterialPicker from '@/components/UI/MaterialPicker';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import StatCard from '@/components/UI/StatCard';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Segmented from '@/components/UI/Segmented';
+import SearchInput from '@/components/UI/SearchInput';
+import EmptyState from '@/components/UI/EmptyState';
+import ProgressBar from '@/components/UI/ProgressBar';
+import Alert from '@/components/UI/Alert';
+import { Badge, StatusBadge } from '@/components/UI/Badge';
+import OrderFormFields from '@/components/Orders/OrderFormFields';
 import api from '@/lib/api';
+import { fmtDate, fmtDateTime, fmtKg, fmtNum, fmtWeight, toNum } from '@/lib/format';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
-
-const LABEL = { fontSize: '11px', fontWeight: 700 };
-const INPUT = { width: '100%', padding: '6px', marginTop: '4px' };
+import {
+    buildFormula,
+    formulaLabel,
+    lineRemainingKg,
+    orderDirection,
+    orderDoneKg,
+    orderLines,
+    orderPartnerName,
+    orderPlannedKg,
+    orderRemainingKg,
+    parseFormula,
+    PAYMENT_TERMS,
+} from '@/lib/orders';
 
 const EMPTY_FORM = {
     direction: 'BUY',
@@ -22,28 +47,24 @@ const EMPTY_FORM = {
     endDate: '',
 };
 
-const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const toIso = (d) => (d ? new Date(d).toISOString() : null);
 
-/* Stavke narudžbe; stari ugovori (bez items) se prikazuju kao jedna stavka */
-function getLines(c) {
-    if (Array.isArray(c.items) && c.items.length) return c.items;
-    if (c.material) {
-        return [{ id: `legacy-${c.id}`, materialId: c.materialId, material: c.material, qtyKg: Number(c.qtyTons || 0) * 1000, doneKg: 0, legacy: true }];
-    }
-    return [];
-}
+const DIRECTION_FILTERS = [
+    { value: 'ALL', label: 'Sve' },
+    { value: 'BUY', label: 'Nabavka' },
+    { value: 'SELL', label: 'Prodaja' },
+];
 
-function getPlannedKg(c) {
-    if (c.qtyMode === 'TOTAL') return Number(c.totalQtyKg || 0);
-    return getLines(c).reduce((sum, l) => sum + Number(l.qtyKg || 0), 0);
-}
+const STATUS_FILTERS = [
+    { value: 'ALL', label: 'Svi statusi' },
+    { value: 'Aktivan', label: 'Aktivne' },
+    { value: 'Završen', label: 'Završene' },
+    { value: 'Otkazan', label: 'Otkazane' },
+];
 
-function parseFormula(formula) {
-    const text = String(formula || '');
-    const type = text.startsWith('LME') ? 'LME' : 'Fiksno';
-    const value = text.replace(/^(LME|Fiksno)\s*-?/, '').replace('%', '').trim();
-    return { type, value };
+function DirectionBadge({ contract }) {
+    const sell = orderDirection(contract) === 'SELL';
+    return <Badge tone={sell ? 'orange' : 'info'}>{sell ? 'Prodaja' : 'Nabavka'}</Badge>;
 }
 
 export default function ContractsPage() {
@@ -52,9 +73,15 @@ export default function ContractsPage() {
     const [customers, setCustomers] = useState([]);
     const [materials, setMaterials] = useState([]);
     const [filterDir, setFilterDir] = useState('ALL');
+    const [filterStatus, setFilterStatus] = useState('ALL');
+    const [search, setSearch] = useState('');
+    const [listLoading, setListLoading] = useState(true);
     const [showNew, setShowNew] = useState(false);
     const [showEdit, setShowEdit] = useState(false);
     const [editingContract, setEditingContract] = useState(null);
+    const [detailContract, setDetailContract] = useState(null);
+    const [detailTickets, setDetailTickets] = useState([]);
+    const [detailLoading, setDetailLoading] = useState(false);
     const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
     const [items, setItems] = useState([]); // { materialId, label, qtyKg, pricePerKg }
     const [partnerQuery, setPartnerQuery] = useState('');
@@ -63,6 +90,7 @@ export default function ContractsPage() {
     const [loading, setLoading] = useState(false);
     const [formError, setFormError] = useState('');
     const [formData, setFormData] = useState(EMPTY_FORM);
+    const [pageInfo, setPageInfo] = useState('');
 
     const isBuy = formData.direction === 'BUY';
     const partners = isBuy ? suppliers : customers;
@@ -90,6 +118,8 @@ export default function ContractsPage() {
                 setSuppliers([]);
                 setCustomers([]);
                 setMaterials([]);
+            } finally {
+                setListLoading(false);
             }
         };
         load();
@@ -100,10 +130,30 @@ export default function ContractsPage() {
         setPartnerQuery(selected?.name || '');
     }, [formData.partnerId, suppliers, customers, formData.direction]);
 
-    const visibleContracts = useMemo(
-        () => contractsList.filter((c) => filterDir === 'ALL' || (c.direction || 'BUY') === filterDir),
-        [contractsList, filterDir]
-    );
+    const visibleContracts = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return contractsList.filter((c) => {
+            if (filterDir !== 'ALL' && orderDirection(c) !== filterDir) return false;
+            if (filterStatus !== 'ALL' && c.status !== filterStatus) return false;
+            if (!q) return true;
+            const haystack = [
+                c.code,
+                orderPartnerName(c),
+                ...orderLines(c).map((l) => `${l.material?.code || ''} ${l.material?.name || ''}`),
+            ].join(' ').toLowerCase();
+            return haystack.includes(q);
+        });
+    }, [contractsList, filterDir, filterStatus, search]);
+
+    const stats = useMemo(() => {
+        const active = contractsList.filter((c) => c.status === 'Aktivan');
+        return {
+            active: active.length,
+            buyRemaining: active.filter((c) => orderDirection(c) === 'BUY').reduce((sum, c) => sum + orderRemainingKg(c), 0),
+            sellRemaining: active.filter((c) => orderDirection(c) === 'SELL').reduce((sum, c) => sum + orderRemainingKg(c), 0),
+            finished: contractsList.filter((c) => c.status === 'Završen').length,
+        };
+    }, [contractsList]);
 
     const resolvePartnerId = (value) => {
         const normalized = String(value || '').trim().toLowerCase();
@@ -112,6 +162,12 @@ export default function ContractsPage() {
         if (byId) return byId.id;
         const byName = partners.find((p) => String(p.name || '').trim().toLowerCase() === normalized);
         return byName?.id || '';
+    };
+
+    const handlePartnerQueryChange = (value, opts = {}) => {
+        setPartnerQuery(value);
+        if (opts.reset) return;
+        setFormData((prev) => ({ ...prev, partnerId: resolvePartnerId(value) }));
     };
 
     const createPartner = async () => {
@@ -160,11 +216,6 @@ export default function ContractsPage() {
         return '';
     };
 
-    const buildFormula = () => {
-        const v = String(formData.formulaValue || '').replace('%', '').trim();
-        return formData.formula === 'LME' ? `LME -${v}%` : `Fiksno ${v}`;
-    };
-
     const buildItemsPayload = () => items.map((it) => ({
         materialId: it.materialId,
         qtyKg: formData.qtyMode === 'PER_MATERIAL' ? Number(it.qtyKg) : null,
@@ -185,14 +236,14 @@ export default function ContractsPage() {
         if (err) { setFormError(err); return; }
         setLoading(true);
         try {
-            await api.post('/sourcing/contracts', {
+            const res = await api.post('/sourcing/contracts', {
                 direction: formData.direction,
                 partnerId: formData.partnerId,
                 items: buildItemsPayload(),
                 qtyMode: formData.qtyMode,
                 totalQtyKg: formData.qtyMode === 'TOTAL' ? Number(formData.totalQtyKg) : null,
                 tolerance: formData.tolerance,
-                formula: buildFormula(),
+                formula: buildFormula(formData.formula, formData.formulaValue),
                 paymentTerms: formData.paymentTerms,
                 period: formData.startDate && formData.endDate ? `${formData.startDate} - ${formData.endDate}` : 'Spot',
                 status: 'Aktivan',
@@ -201,6 +252,8 @@ export default function ContractsPage() {
             });
             await refreshContracts();
             setShowNew(false);
+            const code = res?.data?.data?.code;
+            setPageInfo(`Narudžba ${code || ''} je kreirana.`);
         } catch (error) {
             setFormError(error?.response?.data?.error || 'Kreiranje narudžbe nije uspjelo.');
         } finally {
@@ -225,13 +278,14 @@ export default function ContractsPage() {
             startDate: c.startDate ? String(c.startDate).slice(0, 10) : '',
             endDate: c.endDate ? String(c.endDate).slice(0, 10) : '',
         });
-        setItems(getLines(c).map((l) => ({
+        setItems(orderLines(c).map((l) => ({
             materialId: l.materialId,
             label: `${l.material?.code || '-'} - ${l.material?.name || ''}`,
             qtyKg: l.qtyKg !== null && l.qtyKg !== undefined ? String(Number(l.qtyKg)) : '',
             pricePerKg: l.pricePerKg !== undefined && l.pricePerKg !== null ? Number(l.pricePerKg) : null,
         })));
         setFormError('');
+        setDetailContract(null);
         setShowEdit(true);
     };
 
@@ -249,7 +303,7 @@ export default function ContractsPage() {
                 qtyMode: formData.qtyMode,
                 totalQtyKg: formData.qtyMode === 'TOTAL' ? Number(formData.totalQtyKg) : null,
                 tolerance: formData.tolerance !== '' ? Number(formData.tolerance) : null,
-                formula: buildFormula(),
+                formula: buildFormula(formData.formula, formData.formulaValue),
                 paymentTerms: formData.paymentTerms,
                 status: formData.status,
                 period: formData.startDate && formData.endDate ? `${formData.startDate} - ${formData.endDate}` : editingContract.period || 'Spot',
@@ -257,6 +311,7 @@ export default function ContractsPage() {
                 endDate: toIso(formData.endDate),
             });
             await refreshContracts();
+            setPageInfo(`Narudžba ${editingContract.code} je sačuvana.`);
             closeEdit();
         } catch (error) {
             setFormError(error?.response?.data?.error || 'Čuvanje nije uspjelo.');
@@ -265,222 +320,290 @@ export default function ContractsPage() {
         }
     };
 
-    /* Zajednička polja forme (nova + uredi) */
-    const renderFormFields = (isEdit) => (
-        <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                <div>
-                    <label style={LABEL}>Vrsta narudžbe</label>
-                    <select
-                        style={INPUT}
-                        value={formData.direction}
-                        disabled={isEdit}
-                        onChange={(e) => { setFormData({ ...formData, direction: e.target.value, partnerId: '' }); setPartnerQuery(''); }}
-                    >
-                        <option value="BUY">Nabavka (mi kupujemo)</option>
-                        <option value="SELL">Prodaja (mi prodajemo)</option>
-                    </select>
-                </div>
-                <div>
-                    <label style={LABEL}>{isBuy ? 'Dobavljač *' : 'Kupac *'}</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: isEdit ? '1fr' : '1fr auto', gap: '6px', marginTop: '4px' }}>
-                        <input
-                            list="contracts-page-partners"
-                            style={{ ...INPUT, marginTop: 0 }}
-                            value={partnerQuery}
-                            disabled={isEdit}
-                            onChange={(e) => {
-                                const value = e.target.value;
-                                setPartnerQuery(value);
-                                setFormData({ ...formData, partnerId: resolvePartnerId(value) });
-                            }}
-                        />
-                        {!isEdit && <button type="button" className="btn-primary" onClick={() => setCreatePartnerOpen(true)}>+ Novi</button>}
-                    </div>
-                    <datalist id="contracts-page-partners">
-                        {partners.map((p) => <option key={p.id} value={p.name} />)}
-                    </datalist>
-                </div>
+    const openDetail = async (c) => {
+        setDetailContract(c);
+        setDetailTickets([]);
+        setDetailLoading(true);
+        try {
+            const res = await api.get('/gate/tickets', { params: { contractId: c.id } });
+            setDetailTickets(normalizeApiList(res));
+        } catch {
+            setDetailTickets([]);
+        } finally {
+            setDetailLoading(false);
+        }
+    };
 
-                <div style={{ gridColumn: '1 / -1' }}>
-                    <label style={LABEL}>Način zadavanja količine</label>
-                    <select style={INPUT} value={formData.qtyMode} onChange={(e) => setFormData({ ...formData, qtyMode: e.target.value })}>
-                        <option value="PER_MATERIAL">Količina po materijalu</option>
-                        <option value="TOTAL">Ukupna količina cijele narudžbe</option>
-                    </select>
-                </div>
-                {formData.qtyMode === 'TOTAL' && (
-                    <div>
-                        <label style={LABEL}>Ukupno (kg) *</label>
-                        <input type="number" className="font-mono" style={INPUT} value={formData.totalQtyKg} onChange={(e) => setFormData({ ...formData, totalQtyKg: e.target.value })} />
-                    </div>
-                )}
+    const formProps = {
+        form: formData,
+        setForm: setFormData,
+        items,
+        setItems,
+        partners,
+        partnerQuery,
+        onPartnerQueryChange: handlePartnerQueryChange,
+        onOpenMaterialPicker: () => setMaterialPickerOpen(true),
+        onOpenCreatePartner: () => setCreatePartnerOpen(true),
+        error: formError,
+        datalistId: 'contracts-page-partners',
+    };
 
-                <div style={{ gridColumn: '1 / -1' }}>
-                    <label style={LABEL}>Materijali *</label>
-                    {items.map((it, idx) => (
-                        <div key={it.materialId} style={{ display: 'grid', gridTemplateColumns: '1fr 140px auto', gap: '6px', marginTop: '4px' }}>
-                            <div style={{ padding: '6px', border: '1px solid var(--border-color)' }}>{it.label}</div>
-                            {formData.qtyMode === 'PER_MATERIAL' ? (
-                                <input type="number" className="font-mono" placeholder="kg" value={it.qtyKg} style={{ padding: '6px' }}
-                                    onChange={(e) => setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyKg: e.target.value } : x)))} />
-                            ) : <div />}
-                            <button type="button" onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}>✕</button>
-                        </div>
-                    ))}
-                    {!items.length && <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Nema dodanih materijala.</div>}
-                    <button type="button" className="btn-primary" style={{ marginTop: '8px' }} onClick={() => setMaterialPickerOpen(true)}>+ Dodaj materijal</button>
-                </div>
-
-                <div>
-                    <label style={LABEL}>Formula Cijene *</label>
-                    <select style={INPUT} value={formData.formula} onChange={(e) => setFormData({ ...formData, formula: e.target.value })}>
-                        <option value="LME">LME Cash Settlement - X%</option>
-                        <option value="Fiksno">Fiksna Cijena (BAM/KG)</option>
-                    </select>
-                </div>
-                <div>
-                    <label style={LABEL}>Odbitak / Fiksno</label>
-                    <input type="text" className="font-mono" style={INPUT} placeholder="15 ili 0.30" value={formData.formulaValue} onChange={(e) => setFormData({ ...formData, formulaValue: e.target.value })} />
-                </div>
-                <div>
-                    <label style={LABEL}>Paritet *</label>
-                    <select style={INPUT} value={formData.paymentTerms} onChange={(e) => setFormData({ ...formData, paymentTerms: e.target.value })}>
-                        <option value="DAP">DAP Pale</option>
-                        <option value="EXW">EXW</option>
-                        <option value="FCA">FCA</option>
-                    </select>
-                </div>
-                <div>
-                    <label style={LABEL}>Tolerancija (%)</label>
-                    <input type="number" className="font-mono" style={INPUT} value={formData.tolerance} onChange={(e) => setFormData({ ...formData, tolerance: e.target.value })} />
-                </div>
-                <div>
-                    <label style={LABEL}>Početak</label>
-                    <input type="date" className="font-mono" style={INPUT} value={formData.startDate} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} />
-                </div>
-                <div>
-                    <label style={LABEL}>Kraj</label>
-                    <input type="date" className="font-mono" style={INPUT} value={formData.endDate} onChange={(e) => setFormData({ ...formData, endDate: e.target.value })} />
-                </div>
-                {isEdit && (
-                    <div>
-                        <label style={LABEL}>Status</label>
-                        <select style={INPUT} value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
-                            <option value="Aktivan">Aktivan</option>
-                            <option value="Završen">Završen</option>
-                            <option value="Otkazan">Otkazan</option>
-                        </select>
-                    </div>
-                )}
-            </div>
-            {formError && (
-                <div style={{ marginTop: '12px', padding: '8px 10px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', fontSize: '12px' }}>{formError}</div>
-            )}
-        </>
-    );
+    const detailLines = detailContract ? orderLines(detailContract) : [];
+    const detailPlanned = detailContract ? orderPlannedKg(detailContract) : 0;
+    const detailTolerance = toNum(detailContract?.tolerance);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
-            <div className="responsive-row">
-                <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Narudžbe / Ugovori</h2>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <select value={filterDir} onChange={(e) => setFilterDir(e.target.value)} style={{ padding: '6px' }}>
-                        <option value="ALL">Sve</option>
-                        <option value="BUY">Nabavka</option>
-                        <option value="SELL">Prodaja</option>
+        <div className="ui-page">
+            <PageHeader
+                title="Narudžbe"
+                subtitle="Nabavka od dobavljača i prodaja kupcima — ispunjenost se ažurira automatski pri zatvaranju vaganja"
+                actions={<Button icon={Plus} onClick={handleOpenNew}>Nova narudžba</Button>}
+            />
+
+            {pageInfo && <Alert tone="success" onClose={() => setPageInfo('')}>{pageInfo}</Alert>}
+
+            <div className="ui-kpi-grid">
+                <StatCard label="Aktivne narudžbe" icon={ClipboardList} value={fmtNum(stats.active)} loading={listLoading} />
+                <StatCard label="Preostalo za prijem" icon={ArrowDownToLine} value={fmtWeight(stats.buyRemaining)} hint="aktivne nabavke" loading={listLoading} />
+                <StatCard label="Preostalo za isporuku" icon={ArrowUpFromLine} tone="orange" value={fmtWeight(stats.sellRemaining)} hint="aktivne prodaje" loading={listLoading} />
+                <StatCard label="Završene" icon={CheckCircle2} tone="success" value={fmtNum(stats.finished)} loading={listLoading} />
+            </div>
+
+            <Card flush>
+                <div className="ui-toolbar" style={{ padding: 14, borderBottom: '1px solid var(--border)' }}>
+                    <Segmented options={DIRECTION_FILTERS} value={filterDir} onChange={setFilterDir} ariaLabel="Vrsta narudžbe" />
+                    <select className="ui-input" style={{ width: 'auto', minWidth: 150 }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="Status">
+                        {STATUS_FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
-                    <button className="btn-primary" onClick={handleOpenNew}>+ NOVA NARUDŽBA</button>
+                    <SearchInput className="grow" value={search} onChange={setSearch} placeholder="Pretraži broj, partnera ili materijal..." />
                 </div>
-            </div>
 
-            <div className="scada-panel responsive-table" style={{ flex: 1, overflow: 'auto' }}>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>BR.</th>
-                            <th>VRSTA</th>
-                            <th>PARTNER</th>
-                            <th>MATERIJALI (ISPUNJENO / PLAN)</th>
-                            <th style={{ textAlign: 'right' }}>UKUPNO (KG)</th>
-                            <th style={{ textAlign: 'right' }}>PREOSTALO (KG)</th>
-                            <th>PERIOD</th>
-                            <th>STATUS</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {visibleContracts.map((c) => {
-                            const direction = c.direction || 'BUY';
-                            const lines = getLines(c);
-                            const planned = getPlannedKg(c);
-                            const done = Number(c.doneKg || 0);
-                            const remaining = Math.max(0, planned - done);
-                            const partnerName = direction === 'BUY' ? c.supplier?.name : c.customer?.name;
-                            return (
-                                <tr key={c.id}>
-                                    <td className="font-mono" style={{ fontWeight: 600 }}>{c.code || c.id}</td>
-                                    <td>
-                                        <span style={{
-                                            padding: '2px 6px', fontSize: '11px', fontWeight: 700,
-                                            background: direction === 'BUY' ? '#dbeafe' : '#ffedd5',
-                                            color: direction === 'BUY' ? '#1d4ed8' : '#b45309',
-                                        }}>
-                                            {direction === 'BUY' ? 'NABAVKA' : 'PRODAJA'}
-                                        </span>
-                                    </td>
-                                    <td>{partnerName || '-'}</td>
-                                    <td style={{ fontSize: '12px' }}>
-                                        {lines.map((l) => (
-                                            <div key={l.id || l.materialId} className="font-mono">
-                                                {l.material?.code || '-'}:{' '}
-                                                {c.qtyMode === 'TOTAL'
-                                                    ? `${fmt(l.doneKg)} kg`
-                                                    : `${fmt(l.doneKg)} / ${fmt(l.qtyKg)} kg`}
-                                            </div>
-                                        ))}
-                                        {!lines.length && '-'}
-                                        {c.qtyMode === 'TOTAL' && <div style={{ color: '#64748b' }}>(plan na cijelu narudžbu)</div>}
-                                    </td>
-                                    <td className="font-mono" style={{ textAlign: 'right' }}>{fmt(planned)}</td>
-                                    <td className="font-mono" style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(remaining)}</td>
-                                    <td className="font-mono" style={{ fontSize: '11px' }}>{c.period || '-'}</td>
-                                    <td>
-                                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                            <span style={{
-                                                padding: '2px 6px', fontSize: '11px', fontWeight: 700,
-                                                background: c.status === 'Aktivan' ? '#dcfce7' : '#fef3c7',
-                                                color: c.status === 'Aktivan' ? '#15803d' : '#b45309',
-                                            }}>{c.status}</span>
-                                            <button type="button" onClick={() => handleOpenEdit(c)} style={{ padding: '2px 8px', fontSize: '10px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>✎</button>
-                                        </div>
-                                    </td>
+                {listLoading ? (
+                    <div className="stack" style={{ padding: 18, gap: 10 }}>
+                        {[0, 1, 2].map((i) => <div key={i} className="ui-skeleton" style={{ height: 44 }} />)}
+                    </div>
+                ) : visibleContracts.length === 0 ? (
+                    <EmptyState
+                        icon={ClipboardList}
+                        title={contractsList.length ? 'Nema narudžbi za odabrane filtere' : 'Još nema narudžbi'}
+                        text={contractsList.length ? 'Promijeni filter ili pretragu.' : 'Kreiraj prvu narudžbu za nabavku ili prodaju.'}
+                        action={!contractsList.length && <Button icon={Plus} onClick={handleOpenNew}>Nova narudžba</Button>}
+                    />
+                ) : (
+                    <div className="ui-table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Narudžba</th>
+                                    <th>Vrsta</th>
+                                    <th>Partner</th>
+                                    <th style={{ minWidth: 240 }}>Materijali (ispunjeno / plan)</th>
+                                    <th style={{ minWidth: 180 }}>Ispunjenost</th>
+                                    <th className="num">Preostalo</th>
+                                    <th>Status</th>
+                                    <th style={{ width: 90 }} />
                                 </tr>
-                            );
-                        })}
-                        {!visibleContracts.length && (
-                            <tr><td colSpan={8} style={{ padding: '16px', color: '#64748b' }}>Nema narudžbi.</td></tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
+                            </thead>
+                            <tbody>
+                                {visibleContracts.map((c) => {
+                                    const lines = orderLines(c);
+                                    const planned = orderPlannedKg(c);
+                                    const done = orderDoneKg(c);
+                                    const remaining = orderRemainingKg(c);
+                                    const isTotal = c.qtyMode === 'TOTAL';
+                                    return (
+                                        <tr key={c.id} onClick={() => openDetail(c)} style={{ cursor: 'pointer' }}>
+                                            <td>
+                                                <div style={{ fontWeight: 700 }}>{c.code || c.id}</div>
+                                                <div className="muted" style={{ fontSize: 11.5 }}>{c.period || '-'}</div>
+                                            </td>
+                                            <td><DirectionBadge contract={c} /></td>
+                                            <td style={{ fontWeight: 500 }}>{orderPartnerName(c) || '-'}</td>
+                                            <td>
+                                                <div style={{ display: 'grid', gap: 6 }}>
+                                                    {lines.map((l) => (
+                                                        <div key={l.id || l.materialId} style={{ display: 'grid', gap: 3 }}>
+                                                            <div className="row-between" style={{ fontSize: 12 }}>
+                                                                <span className="font-code" style={{ fontWeight: 600 }}>{l.material?.code || '-'}</span>
+                                                                <span className="font-mono muted">
+                                                                    {isTotal ? fmtKg(l.doneKg) : `${fmtNum(l.doneKg)} / ${fmtNum(l.qtyKg)} kg`}
+                                                                </span>
+                                                            </div>
+                                                            {!isTotal && <ProgressBar size="sm" value={l.doneKg} max={l.qtyKg} tolerancePct={toNum(c.tolerance)} />}
+                                                        </div>
+                                                    ))}
+                                                    {!lines.length && <span className="muted">-</span>}
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <ProgressBar
+                                                    value={done}
+                                                    max={planned}
+                                                    tolerancePct={toNum(c.tolerance)}
+                                                    valueText={planned > 0 ? `${fmtNum((done / planned) * 100)}%` : '-'}
+                                                    footLeft={`${fmtWeight(done)} od ${fmtWeight(planned)}`}
+                                                    tone={c.status === 'Otkazan' ? 'neutral' : undefined}
+                                                />
+                                            </td>
+                                            <td className="num" style={{ fontWeight: 700 }}>{fmtKg(remaining)}</td>
+                                            <td><StatusBadge status={c.status} /></td>
+                                            <td onClick={(e) => e.stopPropagation()}>
+                                                <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                                                    <Button variant="ghost" size="sm" icon={Eye} aria-label={`Detalji ${c.code}`} title="Detalji" onClick={() => openDetail(c)} />
+                                                    <Button variant="ghost" size="sm" icon={Pencil} aria-label={`Uredi ${c.code}`} title="Uredi" onClick={() => handleOpenEdit(c)} />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+                {!listLoading && visibleContracts.length > 0 && (
+                    <div className="muted" style={{ padding: '10px 18px', borderTop: '1px solid var(--border)', fontSize: 12 }}>
+                        {visibleContracts.length} od {contractsList.length} narudžbi
+                    </div>
+                )}
+            </Card>
 
-            <Modal open={showNew} onClose={() => setShowNew(false)} title="Nova Narudžba" width={750}>
+            {/* ---------- Detalji narudžbe ---------- */}
+            <Modal
+                open={Boolean(detailContract)}
+                onClose={() => setDetailContract(null)}
+                title={detailContract ? `Narudžba ${detailContract.code}` : ''}
+                subtitle={detailContract ? `${orderPartnerName(detailContract) || '-'} · ${detailContract.direction === 'SELL' ? 'prodaja (vaganje IZLAZ)' : 'nabavka (vaganje ULAZ)'}` : ''}
+                width={860}
+            >
+                {detailContract && (
+                    <div className="stack" style={{ gap: 20 }}>
+                        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <DirectionBadge contract={detailContract} />
+                            <StatusBadge status={detailContract.status} />
+                            <Badge tone="outline">{detailContract.qtyMode === 'TOTAL' ? 'Ukupna količina' : 'Količina po materijalu'}</Badge>
+                        </div>
+
+                        <div className="ui-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                            {[
+                                ['Period', detailContract.period || '-'],
+                                ['Početak', fmtDate(detailContract.startDate)],
+                                ['Kraj', fmtDate(detailContract.endDate)],
+                                ['Formula', formulaLabel(detailContract.formula)],
+                                ['Paritet', PAYMENT_TERMS.find((t) => t.value === detailContract.paymentTerms)?.label || detailContract.paymentTerms || '-'],
+                                ['Tolerancija', `${fmtNum(detailTolerance, 2)}%`],
+                            ].map(([label, value]) => (
+                                <div key={label}>
+                                    <div className="ui-label" style={{ color: 'var(--text-3)', fontWeight: 500 }}>{label}</div>
+                                    <div style={{ fontWeight: 600, marginTop: 2 }}>{value}</div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="ui-card" style={{ padding: 16, background: 'var(--surface-2)' }}>
+                            <ProgressBar
+                                size="lg"
+                                label="Ukupna ispunjenost"
+                                valueText={detailPlanned > 0 ? `${fmtNum((orderDoneKg(detailContract) / detailPlanned) * 100)}%` : '-'}
+                                value={orderDoneKg(detailContract)}
+                                max={detailPlanned}
+                                tolerancePct={detailTolerance}
+                                footLeft={`Ispunjeno ${fmtKg(orderDoneKg(detailContract))} od ${fmtKg(detailPlanned)}`}
+                                footRight={`Preostalo ${fmtKg(orderRemainingKg(detailContract))}`}
+                            />
+                            {detailContract.qtyMode !== 'TOTAL' && detailLines.length > 0 && (
+                                <div className="stack" style={{ gap: 14, marginTop: 18 }}>
+                                    {detailLines.map((l) => {
+                                        const rem = lineRemainingKg(l);
+                                        return (
+                                            <ProgressBar
+                                                key={l.id || l.materialId}
+                                                label={`${l.material?.code || '-'} · ${l.material?.name || ''}`}
+                                                valueText={`${fmtNum(l.doneKg)} / ${fmtNum(l.qtyKg)} kg`}
+                                                value={l.doneKg}
+                                                max={l.qtyKg}
+                                                tolerancePct={detailTolerance}
+                                                footRight={rem !== null ? `preostalo ${fmtKg(Math.max(0, rem))}` : ''}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            {detailContract.qtyMode === 'TOTAL' && detailLines.length > 0 && (
+                                <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>
+                                    {detailLines.map((l) => (
+                                        <div key={l.id || l.materialId} className="row-between" style={{ fontSize: 12.5 }}>
+                                            <span>{l.material?.code || '-'} · {l.material?.name || ''}</span>
+                                            <b className="font-mono">{fmtKg(l.doneKg)}</b>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div>
+                            <div className="ui-section-title">Vaganja na narudžbi</div>
+                            {detailLoading ? (
+                                <div className="ui-skeleton" style={{ height: 60 }} />
+                            ) : detailTickets.length === 0 ? (
+                                <div className="muted" style={{ fontSize: 12.5 }}>Još nema vaganja vezanih za ovu narudžbu.</div>
+                            ) : (
+                                <div className="ui-card" style={{ overflow: 'hidden' }}>
+                                    <div className="ui-table-wrap" style={{ maxHeight: 280 }}>
+                                        <table>
+                                            <thead>
+                                                <tr>
+                                                    <th>Datum</th>
+                                                    <th>Kod</th>
+                                                    <th>Tablice</th>
+                                                    <th>Materijal</th>
+                                                    <th className="num">Neto</th>
+                                                    <th>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {detailTickets.map((t) => (
+                                                    <tr key={t.id}>
+                                                        <td>{fmtDateTime(t.date)}</td>
+                                                        <td className="font-code" style={{ fontSize: 12 }}><Link href={`/gate/${t.id}`} style={{ color: 'var(--primary-ink)' }}>{t.code}</Link></td>
+                                                        <td>{t.plate || '-'}</td>
+                                                        <td>{t.material?.code || '-'} · {t.material?.name || ''}</td>
+                                                        <td className="num">{fmtKg(t.net)}</td>
+                                                        <td><StatusBadge status={t.status} /></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                            <div className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>Na ispunjenost se računaju samo zatvorena vaganja; storno vraća količinu.</div>
+                        </div>
+
+                        <div className="ui-modal-footer" style={{ marginTop: 0 }}>
+                            <Button variant="secondary" onClick={() => setDetailContract(null)}>Zatvori</Button>
+                            <Button icon={Pencil} onClick={() => handleOpenEdit(detailContract)}>Uredi narudžbu</Button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            <Modal open={showNew} onClose={() => setShowNew(false)} title="Nova narudžba" subtitle="Nabavka ili prodaja sa jednim ili više materijala" width={780}>
                 <form onSubmit={handleSubmit}>
-                    {renderFormFields(false)}
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                        <button type="button" onClick={() => setShowNew(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                        <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'KREIRAJ NARUDŽBU'}</button>
+                    <OrderFormFields {...formProps} isEdit={false} />
+                    <div className="ui-modal-footer">
+                        <Button variant="secondary" onClick={() => setShowNew(false)}>Odustani</Button>
+                        <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Kreiraj narudžbu'}</Button>
                     </div>
                 </form>
             </Modal>
 
-            <Modal open={showEdit} onClose={closeEdit} title={`Uredi narudžbu ${editingContract?.code || ''}`} width={750}>
+            <Modal open={showEdit} onClose={closeEdit} title={`Uredi narudžbu ${editingContract?.code || ''}`} width={780}>
                 {editingContract && (
                     <form onSubmit={handleSaveEdit}>
-                        {renderFormFields(true)}
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                            <button type="button" onClick={closeEdit} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                            <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'SAČUVAJ'}</button>
+                        <OrderFormFields {...formProps} isEdit />
+                        <div className="ui-modal-footer">
+                            <Button variant="secondary" onClick={closeEdit}>Odustani</Button>
+                            <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Sačuvaj'}</Button>
                         </div>
                     </form>
                 )}
@@ -492,16 +615,13 @@ export default function ContractsPage() {
                 onSelect={({ material }) => { addMaterial(material); setMaterialPickerOpen(false); }}
             />
 
-            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title={isBuy ? 'Novi dobavljač' : 'Novi kupac'} width={520}>
-                <div style={{ display: 'grid', gap: '10px' }}>
-                    <div>
-                        <label style={LABEL}>{isBuy ? 'Naziv dobavljača *' : 'Naziv kupca *'}</label>
-                        <input value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} style={{ width: '100%', padding: '8px', marginTop: '4px' }} />
-                    </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                    <button type="button" onClick={() => setCreatePartnerOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                    <button type="button" className="btn-primary" onClick={createPartner} style={{ padding: '8px 16px' }}>Sačuvaj</button>
+            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title={isBuy ? 'Novi dobavljač' : 'Novi kupac'} width={480} zIndex={3500}>
+                <Field label={isBuy ? 'Naziv dobavljača' : 'Naziv kupca'} required>
+                    <input className="ui-input" value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} autoFocus />
+                </Field>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreatePartnerOpen(false)}>Odustani</Button>
+                    <Button onClick={createPartner}>Sačuvaj</Button>
                 </div>
             </Modal>
         </div>

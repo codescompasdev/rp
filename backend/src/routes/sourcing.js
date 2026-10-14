@@ -28,7 +28,10 @@ router.get('/suppliers', async (req, res) => {
 router.get('/suppliers/:id', async (req, res) => {
   const data = await prisma.supplier.findUnique({
     where: { id: req.params.id },
-    include: { contracts: true, announcements: { take: 5 } },
+    include: {
+      contracts: { include: { items: { include: { material: true } }, material: true }, orderBy: { code: 'desc' } },
+      announcements: { take: 10, orderBy: { expectedDate: 'desc' }, include: { material: true } },
+    },
   });
   if (!data) return res.status(404).json({ error: 'Not found' });
   res.json({ data });

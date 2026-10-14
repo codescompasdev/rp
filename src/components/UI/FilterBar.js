@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import styles from './FilterBar.module.css';
+import SearchInput from './SearchInput';
 
 export default function FilterBar({ onSearch, filters = [] }) {
     // filters: [{ name: 'status', label: 'Status', type: 'select', options: [] }, ...]
@@ -14,45 +14,49 @@ export default function FilterBar({ onSearch, filters = [] }) {
         if (onSearch) onSearch(query, newFilters);
     };
 
-    const handleSearch = () => {
-        if (onSearch) onSearch(query, activeFilters);
+    const handleQueryChange = (value) => {
+        setQuery(value);
+        if (onSearch) onSearch(value, activeFilters);
+    };
+
+    const clear = () => {
+        setQuery('');
+        setActiveFilters({});
+        if (onSearch) onSearch('', {});
     };
 
     return (
-        <div className={styles.filterBar}>
-            <div className={styles.searchSection}>
-                <div className={styles.searchBox}>
-                    <input
-                        type="text"
-                        placeholder="Pretraži..."
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        className={styles.searchInput}
-                    />
-                    <button onClick={handleSearch} className={styles.searchBtn}>🔍</button>
-                </div>
-            </div>
-
-            <div className={styles.filtersSection}>
-                {filters.map(filter => (
-                    <div key={filter.name} className={styles.filterItem}>
-                        <label>{filter.label}</label>
-                        {filter.type === 'select' ? (
-                            <select onChange={(e) => handleFilterChange(filter.name, e.target.value)} className={styles.select}>
-                                <option value="">Sve</option>
-                                {filter.options.map(opt => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                            </select>
-                        ) : (
-                            <input type={filter.type} className={styles.input} />
-                        )}
-                    </div>
+        <div className="ui-card" style={{ padding: 12, marginBottom: 16 }}>
+            <div className="ui-toolbar">
+                <SearchInput className="grow" value={query} onChange={handleQueryChange} />
+                {filters.map((filter) => (
+                    filter.type === 'select' ? (
+                        <select
+                            key={filter.name}
+                            className="ui-input"
+                            style={{ width: 'auto', minWidth: 150 }}
+                            value={activeFilters[filter.name] || ''}
+                            onChange={(e) => handleFilterChange(filter.name, e.target.value)}
+                            aria-label={filter.label}
+                        >
+                            <option value="">{filter.label}: sve</option>
+                            {filter.options.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
+                    ) : (
+                        <input
+                            key={filter.name}
+                            type={filter.type}
+                            className="ui-input"
+                            style={{ width: 'auto' }}
+                            aria-label={filter.label}
+                            value={activeFilters[filter.name] || ''}
+                            onChange={(e) => handleFilterChange(filter.name, e.target.value)}
+                        />
+                    )
                 ))}
-            </div>
-
-            <div className={styles.actions}>
-                <button className={styles.actionBtn} onClick={() => { setQuery(''); setActiveFilters({}); }}>Očisti</button>
+                <button type="button" className="ui-btn ghost" onClick={clear}>Očisti</button>
             </div>
         </div>
     );

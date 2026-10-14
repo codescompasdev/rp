@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+// greške iz async ruta idu u error handler umjesto da obore server
+import 'express-async-errors';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -67,6 +69,10 @@ app.use('/api/v1', authMiddleware, systemRoutes);
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
 });
 
 initSocketServer(httpServer);

@@ -1,12 +1,21 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CalendarClock, Package, Pencil, Plus, Truck } from 'lucide-react';
 import Modal from '@/components/UI/Modal';
 import MaterialPicker from '@/components/UI/MaterialPicker';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import StatCard from '@/components/UI/StatCard';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import Segmented from '@/components/UI/Segmented';
+import SearchInput from '@/components/UI/SearchInput';
+import EmptyState from '@/components/UI/EmptyState';
+import { Badge, StatusBadge } from '@/components/UI/Badge';
 import api from '@/lib/api';
+import { fmtDate, fmtKg, fmtNum, fmtWeight, localYmd } from '@/lib/format';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
-
-const LABEL = { fontSize: '11px', fontWeight: 700 };
-const INPUT = { width: '100%', padding: '6px', marginTop: '4px' };
 
 export default function AnnouncementsPage() {
     const [announcementsList, setAnnouncementsList] = useState([]);
@@ -23,6 +32,9 @@ export default function AnnouncementsPage() {
     const [newSupplierName, setNewSupplierName] = useState('');
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({ supplierId: '', contract: '', expectedKg: '', truck: '', expectedDate: '' });
+    const [formError, setFormError] = useState('');
+    const [statusFilter, setStatusFilter] = useState('ALL');
+    const [search, setSearch] = useState('');
 
     const materialsByCode = useMemo(() => {
         const map = new Map();
@@ -82,7 +94,11 @@ export default function AnnouncementsPage() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!selectedMaterial) return;
+        if (!selectedMaterial) {
+            setFormError('Odaberi materijal za najavu.');
+            return;
+        }
+        setFormError('');
         setLoading(true);
         const backendMaterial = resolveBackendMaterial(materials, selectedMaterial) || materialsByCode.get(selectedMaterial.code);
         try {
@@ -100,6 +116,8 @@ export default function AnnouncementsPage() {
             setFormData((prev) => ({ ...prev, contract: '', expectedKg: '', truck: '', expectedDate: '' }));
             setSelectedMaterial(null);
             setShowNew(false);
+        } catch (error) {
+            setFormError(error?.response?.data?.error || 'Kreiranje najave nije uspjelo.');
         } finally {
             setLoading(false);
         }
@@ -132,49 +150,100 @@ export default function AnnouncementsPage() {
         }
     };
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const isOverdue = (a) => a.status === 'Najavljeno' && a.expectedDate && new Date(a.expectedDate).getTime() < todayStart.getTime();
+    const isToday = (a) => a.expectedDate && localYmd(new Date(a.expectedDate)) === localYmd();
+    const supplierName = (a) => suppliers.find((s) => s.id === (a.supplierId || a.supplier?.id))?.name || a.supplier?.name || '-';
+
+    const statusOptions = [{ value: 'ALL', label: 'Sve' }, ...[...new Set(announcementsList.map((a) => a.status).filter(Boolean))].map((st) => ({ value: st, label: st }))];
+    const visible = announcementsList.filter((a) => {
+        if (statusFilter !== 'ALL' && a.status !== statusFilter) return false;
+        const q = search.trim().toLowerCase();
+        if (!q) return true;
+        return [a.code, supplierName(a), a.material?.code, a.material?.name, a.truck, a.contract?.code].join(' ').toLowerCase().includes(q);
+    });
+    const pending = announcementsList.filter((a) => a.status === 'Najavljeno');
+    const contractChoices = (currentId) => contracts.filter((c) => (c.direction || 'BUY') === 'BUY' || c.id === currentId);
+
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
-            <div className="responsive-row">
-                <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Najave Prijema (Gate Pass)</h2>
-                <button className="btn-primary" onClick={() => setShowNew(true)}>+ NOVA NAJAVA</button>
-            </div>
-            <div className="scada-panel responsive-table" style={{ flex: 1, overflow: 'auto' }}>
-                <table>
-                    <thead><tr><th>BR.</th><th>DOBAVLJAČ</th><th>MATERIJAL</th><th style={{ textAlign: 'right' }}>OČEKIVANO (KG)</th><th>UGOVOR</th><th>KAMION</th><th>DATUM</th><th>STATUS</th></tr></thead>
-                    <tbody>
-                        {announcementsList.map(a => {
-                            const sup = suppliers.find(s => s.id === (a.supplierId || a.supplier?.id));
-                            return (
-                                <tr key={a.id}>
-                                    <td className="font-mono" style={{ fontWeight: 600 }}>{a.code || a.id}</td>
-                                    <td>{sup?.name || a.supplier?.name || '-'}</td>
-                                    <td>{a.material?.code || '-'}</td>
-                                    <td className="font-mono" style={{ textAlign: 'right' }}>{Number(a.expectedKg || 0).toLocaleString()}</td>
-                                    <td className="font-mono">{a.contract?.code || '-'}</td>
-                                    <td className="font-mono">{a.truck}</td>
-                                    <td className="font-mono">{a.expectedDate ? String(a.expectedDate).slice(0, 10) : '-'}</td>
-                                    <td>
-                                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                            <span style={{ padding: '2px 6px', fontSize: '11px', fontWeight: 700, background: a.status === 'Najavljeno' ? '#dbeafe' : a.status === 'U Krugu' ? '#fef3c7' : '#dcfce7', color: a.status === 'Najavljeno' ? '#1d4ed8' : a.status === 'U Krugu' ? '#b45309' : '#15803d' }}>{a.status || '-'}</span>
-                                            <button type="button" onClick={() => handleOpenEdit(a)} style={{ padding: '2px 8px', fontSize: '10px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>✎</button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+        <div className="ui-page">
+            <PageHeader
+                title="Najave prijema"
+                subtitle="Najavljeni dolasci dobavljača — portir ih vidi na kapiji, a pri vaganju se biraju iz liste"
+                actions={<Button icon={Plus} onClick={() => { setFormError(''); setShowNew(true); }}>Nova najava</Button>}
+            />
+
+            <div className="ui-kpi-grid">
+                <StatCard label="Na čekanju" icon={CalendarClock} value={fmtNum(pending.length)} hint="status Najavljeno" />
+                <StatCard label="Očekuje se danas" icon={Truck} tone="aqua" value={fmtNum(pending.filter(isToday).length)} />
+                <StatCard label="Očekivana količina" icon={Package} value={fmtWeight(pending.reduce((sum, a) => sum + Number(a.expectedKg || 0), 0))} hint="najave na čekanju" />
+                <StatCard label="U kašnjenju" icon={AlertTriangle} tone={pending.some(isOverdue) ? 'warning' : 'success'} value={fmtNum(pending.filter(isOverdue).length)} hint="prošao očekivani datum" />
             </div>
 
-            <Modal open={showNew} onClose={() => setShowNew(false)} title="Nova Najava Prijema">
+            <Card flush>
+                <div className="ui-toolbar" style={{ padding: 14, borderBottom: '1px solid var(--border)' }}>
+                    <Segmented options={statusOptions} value={statusFilter} onChange={setStatusFilter} ariaLabel="Status" />
+                    <SearchInput className="grow" value={search} onChange={setSearch} placeholder="Pretraži broj, dobavljača, materijal, tablice..." />
+                </div>
+                {visible.length === 0 ? (
+                    <EmptyState
+                        icon={CalendarClock}
+                        title={announcementsList.length ? 'Nema najava za odabrane filtere' : 'Još nema najava'}
+                        action={!announcementsList.length && <Button icon={Plus} onClick={() => setShowNew(true)}>Nova najava</Button>}
+                    />
+                ) : (
+                    <div className="ui-table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Broj</th>
+                                    <th>Dobavljač</th>
+                                    <th>Materijal</th>
+                                    <th className="num">Očekivano</th>
+                                    <th>Narudžba</th>
+                                    <th>Kamion</th>
+                                    <th>Datum</th>
+                                    <th>Status</th>
+                                    <th style={{ width: 52 }} />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visible.map((a) => (
+                                    <tr key={a.id}>
+                                        <td className="font-code" style={{ fontWeight: 600 }}>{a.code || a.id}</td>
+                                        <td style={{ fontWeight: 500 }}>{supplierName(a)}</td>
+                                        <td>{a.material ? `${a.material.code} · ${a.material.name}` : '-'}</td>
+                                        <td className="num">{fmtKg(a.expectedKg)}</td>
+                                        <td className="font-code">{a.contract?.code || <span className="muted">Spot</span>}</td>
+                                        <td className="font-code">{a.truck || <span className="muted">—</span>}</td>
+                                        <td>
+                                            <div className="row" style={{ gap: 6 }}>
+                                                {fmtDate(a.expectedDate)}
+                                                {isOverdue(a) && <Badge tone="warning">kasni</Badge>}
+                                                {!isOverdue(a) && isToday(a) && <Badge tone="info">danas</Badge>}
+                                            </div>
+                                        </td>
+                                        <td><StatusBadge status={a.status} /></td>
+                                        <td>
+                                            <Button variant="ghost" size="sm" icon={Pencil} aria-label={`Uredi ${a.code}`} title="Uredi" onClick={() => handleOpenEdit(a)} />
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+
+            <Modal open={showNew} onClose={() => setShowNew(false)} title="Nova najava prijema" subtitle="Najava će biti vidljiva portiru na kapiji" width={720}>
                 <form onSubmit={handleSubmit}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                        <div>
-                            <label style={LABEL}>Dobavljač *</label>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
+                    <div className="ui-form-grid">
+                        <Field label="Dobavljač" required>
+                            <div className="ui-input-group">
                                 <input
+                                    className="ui-input"
                                     list="ann-page-suppliers"
-                                    style={{ ...INPUT, marginTop: 0 }}
                                     value={supplierQuery}
                                     onChange={(e) => {
                                         const value = e.target.value;
@@ -183,71 +252,90 @@ export default function AnnouncementsPage() {
                                     }}
                                     required
                                 />
-                                <button type="button" className="btn-primary" onClick={() => setCreateSupplierOpen(true)}>+ Novi</button>
+                                <Button variant="secondary" icon={Plus} onClick={() => setCreateSupplierOpen(true)}>Novi</Button>
                             </div>
                             <datalist id="ann-page-suppliers">
                                 {suppliers.map((supplier) => <option key={supplier.id} value={supplier.name} />)}
                             </datalist>
-                        </div>
-                        <div><label style={LABEL}>Ugovor</label><select style={INPUT} value={formData.contract} onChange={e => setFormData({ ...formData, contract: e.target.value })}>
-                            <option value="">- Spot -</option>
-                            {contracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id}</option>)}
-                        </select></div>
-                        <div><label style={LABEL}>Materijal *</label>
-                            <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                                <button type="button" onClick={() => setMaterialPickerOpen(true)} style={{ flex: 1, padding: '6px', textAlign: 'left', border: '1px solid var(--border-color)', background: selectedMaterial ? '#f8fafc' : '#fff', cursor: 'pointer' }}>
-                                    {selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal...'}
-                                </button>
-                                <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px' }} onClick={() => setMaterialPickerOpen(true)}>Pretraži</button>
-                            </div>
-                        </div>
-                        <div><label style={LABEL}>Očekivana Količina (KG)</label><input type="number" className="font-mono" style={INPUT} value={formData.expectedKg} onChange={e => setFormData({ ...formData, expectedKg: e.target.value })} /></div>
-                        <div><label style={LABEL}>Tablice Kamiona</label><input type="text" className="font-mono" style={INPUT} placeholder="E55-K-991" value={formData.truck} onChange={e => setFormData({ ...formData, truck: e.target.value })} /></div>
-                        <div><label style={LABEL}>Očekivani Datum</label><input type="date" className="font-mono" style={INPUT} value={formData.expectedDate} onChange={e => setFormData({ ...formData, expectedDate: e.target.value })} /></div>
+                        </Field>
+                        <Field label="Narudžba">
+                            <select className="ui-input" value={formData.contract} onChange={(e) => setFormData({ ...formData, contract: e.target.value })}>
+                                <option value="">- Spot (bez narudžbe) -</option>
+                                {contractChoices(formData.contract).map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id} — {contract.supplier?.name || '-'}</option>)}
+                            </select>
+                        </Field>
+                        <Field label="Materijal" required span="all">
+                            <button type="button" className="ui-input ann-material-btn" data-selected={Boolean(selectedMaterial)} onClick={() => setMaterialPickerOpen(true)}>
+                                <Package size={16} />
+                                <span>{selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal iz kataloga...'}</span>
+                            </button>
+                        </Field>
+                        <Field label="Očekivana količina (kg)">
+                            <input type="number" min="0" className="ui-input font-mono" value={formData.expectedKg} onChange={(e) => setFormData({ ...formData, expectedKg: e.target.value })} />
+                        </Field>
+                        <Field label="Tablice kamiona">
+                            <input type="text" className="ui-input font-code" placeholder="E55-K-991" value={formData.truck} onChange={(e) => setFormData({ ...formData, truck: e.target.value })} />
+                        </Field>
+                        <Field label="Očekivani datum">
+                            <input type="date" className="ui-input" value={formData.expectedDate} onChange={(e) => setFormData({ ...formData, expectedDate: e.target.value })} />
+                        </Field>
                     </div>
-                    <div style={{ marginTop: '12px', padding: '8px', background: '#eef2ff', border: '1px solid var(--primary-color)', fontSize: '11px' }}>ℹ️ Najava će biti vidljiva portiru na Kapiji.</div>
-                    <div className="responsive-row" style={{ justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                        <button type="button" onClick={() => setShowNew(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                        <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'KREIRAJ NAJAVU'}</button>
+                    {formError && <Alert tone="danger" style={{ marginTop: 14 }}>{formError}</Alert>}
+                    <div className="ui-modal-footer">
+                        <Button variant="secondary" onClick={() => setShowNew(false)}>Odustani</Button>
+                        <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Kreiraj najavu'}</Button>
                     </div>
                 </form>
             </Modal>
-            <MaterialPicker open={materialPickerOpen} onClose={() => setMaterialPickerOpen(false)} onSelect={({ material }) => setSelectedMaterial(material)} />
-            <Modal open={createSupplierOpen} onClose={() => setCreateSupplierOpen(false)} title="Novi dobavljač" width={520}>
-                <div style={{ display: 'grid', gap: '10px' }}>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Naziv dobavljača *</label>
-                        <input value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} style={{ width: '100%', padding: '8px', marginTop: '4px' }} />
-                    </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                    <button type="button" onClick={() => setCreateSupplierOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                    <button type="button" className="btn-primary" onClick={createSupplier} style={{ padding: '8px 16px' }}>Sačuvaj</button>
+            <MaterialPicker open={materialPickerOpen} onClose={() => setMaterialPickerOpen(false)} onSelect={({ material }) => { setSelectedMaterial(material); setFormError(''); }} />
+            <Modal open={createSupplierOpen} onClose={() => setCreateSupplierOpen(false)} title="Novi dobavljač" width={480} zIndex={3500}>
+                <Field label="Naziv dobavljača" required>
+                    <input className="ui-input" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} autoFocus />
+                </Field>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreateSupplierOpen(false)}>Odustani</Button>
+                    <Button onClick={createSupplier}>Sačuvaj</Button>
                 </div>
             </Modal>
 
-            <Modal open={showEdit} onClose={() => { setShowEdit(false); setEditingAnn(null); }} title="Uredi Najavu" width={550}>
+            <Modal open={showEdit} onClose={() => { setShowEdit(false); setEditingAnn(null); }} title={`Uredi najavu ${editingAnn?.code || ''}`} width={640}>
                 {editingAnn && (
                     <form onSubmit={handleSaveEdit}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                            <div><label style={LABEL}>Dobavljač</label><select style={INPUT} value={formData.supplierId} onChange={e => setFormData({ ...formData, supplierId: e.target.value })}>
-                                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select></div>
-                            <div><label style={LABEL}>Ugovor</label><select style={INPUT} value={formData.contract} onChange={e => setFormData({ ...formData, contract: e.target.value })}>
-                                <option value="">- Spot -</option>
-                                {contracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id}</option>)}
-                            </select></div>
-                            <div><label style={LABEL}>Očekivana Količina (KG)</label><input type="number" className="font-mono" style={INPUT} value={formData.expectedKg} onChange={e => setFormData({ ...formData, expectedKg: e.target.value })} /></div>
-                            <div><label style={LABEL}>Tablice Kamiona</label><input type="text" className="font-mono" style={INPUT} value={formData.truck} onChange={e => setFormData({ ...formData, truck: e.target.value })} /></div>
-                            <div><label style={LABEL}>Očekivani Datum</label><input type="date" className="font-mono" style={INPUT} value={formData.expectedDate} onChange={e => setFormData({ ...formData, expectedDate: e.target.value })} /></div>
+                        <div className="ui-form-grid">
+                            <Field label="Dobavljač">
+                                <select className="ui-input" value={formData.supplierId} onChange={(e) => setFormData({ ...formData, supplierId: e.target.value })}>
+                                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                            </Field>
+                            <Field label="Narudžba">
+                                <select className="ui-input" value={formData.contract} onChange={(e) => setFormData({ ...formData, contract: e.target.value })}>
+                                    <option value="">- Spot (bez narudžbe) -</option>
+                                    {contractChoices(formData.contract).map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id} — {contract.supplier?.name || '-'}</option>)}
+                                </select>
+                            </Field>
+                            <Field label="Očekivana količina (kg)">
+                                <input type="number" min="0" className="ui-input font-mono" value={formData.expectedKg} onChange={(e) => setFormData({ ...formData, expectedKg: e.target.value })} />
+                            </Field>
+                            <Field label="Tablice kamiona">
+                                <input type="text" className="ui-input font-code" value={formData.truck} onChange={(e) => setFormData({ ...formData, truck: e.target.value })} />
+                            </Field>
+                            <Field label="Očekivani datum">
+                                <input type="date" className="ui-input" value={formData.expectedDate} onChange={(e) => setFormData({ ...formData, expectedDate: e.target.value })} />
+                            </Field>
                         </div>
-                        <div className="responsive-row" style={{ justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                            <button type="button" onClick={() => { setShowEdit(false); setEditingAnn(null); }} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                            <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'SAČUVAJ'}</button>
+                        <div className="ui-modal-footer">
+                            <Button variant="secondary" onClick={() => { setShowEdit(false); setEditingAnn(null); }}>Odustani</Button>
+                            <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Sačuvaj'}</Button>
                         </div>
                     </form>
                 )}
             </Modal>
+
+            <style>{`
+                .ann-material-btn { display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer; color: var(--text-2); font-weight: 500; }
+                .ann-material-btn svg { color: var(--primary); flex-shrink: 0; }
+                .ann-material-btn[data-selected='true'] { background: var(--primary-50); border-color: var(--primary-200); color: var(--text); font-weight: 600; }
+            `}</style>
         </div>
     );
 }

@@ -2,12 +2,47 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Factory, FileSpreadsheet, Printer, Search, Users } from 'lucide-react';
 import api from '@/lib/api';
 import { getAuthUser } from '@/lib/authStorage';
-import styles from '../fleet/vehicles/page.module.css';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import StatCard from '@/components/UI/StatCard';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import Segmented from '@/components/UI/Segmented';
+import EmptyState from '@/components/UI/EmptyState';
+import { Badge } from '@/components/UI/Badge';
+import ColumnChart from '@/components/Charts/ColumnChart';
+import BarList from '@/components/Charts/BarList';
+import Legend from '@/components/Charts/Legend';
+import { fmtCompact, fmtDate, fmtDateTime, fmtDayShort, fmtKg, fmtNum, fmtWeight, localYmd } from '@/lib/format';
+
+const FLOW_SERIES = [
+    { key: 'inKg', label: 'Ulaz', color: 'var(--series-1)' },
+    { key: 'outKg', label: 'Izlaz', color: 'var(--series-2)' },
+];
+
+const PRESETS = [
+    { value: 'today', label: 'Danas' },
+    { value: '7d', label: '7 dana' },
+    { value: '14d', label: '14 dana' },
+    { value: '30d', label: '30 dana' },
+    { value: '6m', label: '6 mjeseci' },
+    { value: '1y', label: 'Godina' },
+];
+
+const TYPE_OPTIONS = [
+    { value: 'ALL', label: 'Sve' },
+    { value: 'IN', label: 'Ulaz' },
+    { value: 'OUT', label: 'Izlaz' },
+];
+
+const HISTORY_PAGE = 100;
 
 function toIsoDate(value) {
-    return new Date(value).toISOString().slice(0, 10);
+    return localYmd(new Date(value));
 }
 
 function addDays(date, days) {
@@ -127,10 +162,10 @@ function buildPrintSections(history) {
 }
 
 export default function ReportsPage() {
-    const authUser = getAuthUser();
-    const backendRole = String(authUser?.role || '').toLowerCase();
-    const allowed = ['admin', 'manager', 'owner'].includes(backendRole);
-    const today = new Date().toISOString().slice(0, 10);
+    // uloga se čita tek u pregledniku (localStorage) → bez hydration greške
+    const [allowed, setAllowed] = useState(null);
+    const isAllowedRole = () => ['admin', 'manager', 'owner'].includes(String(getAuthUser()?.role || '').toLowerCase());
+    const today = localYmd();
 
     const [filters, setFilters] = useState({
         from: today,
@@ -139,23 +174,20 @@ export default function ReportsPage() {
         search: '',
     });
     const [dashboardStats, setDashboardStats] = useState(null);
-    const [flow, setFlow] = useState({ summary: null, history: [], byMaterial: [], topStock: [], mostActiveProducts: [] });
+    const [flow, setFlow] = useState({ summary: null, history: [], daily: [], byMaterial: [], topStock: [], mostActiveProducts: [] });
     const [loading, setLoading] = useState(true);
-
-    const labels = {
-        supplierCount: 'Ukupno dobavljaca',
-        customerCount: 'Ukupno kupaca',
-        trucksOnSite: 'Kamiona u krugu',
-        lmeFeeds: 'LME feed zapisa',
-        fxFeeds: 'FX feed zapisa',
-    };
+    const [loadError, setLoadError] = useState('');
+    const [activePreset, setActivePreset] = useState('today');
+    const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
 
     const loadData = (nextFilters = filters) => {
-        if (!allowed) {
+        if (!isAllowedRole()) {
             setLoading(false);
             return;
         }
         setLoading(true);
+        setLoadError('');
+        setHistoryLimit(HISTORY_PAGE);
         Promise.all([
             api.get('/reports/dashboard'),
             api.get('/reports/flow', { params: nextFilters }),
@@ -173,34 +205,34 @@ export default function ReportsPage() {
                 setFlow({
                     summary: flowData.summary || null,
                     history: Array.isArray(flowData.history) ? flowData.history : [],
+                    daily: Array.isArray(flowData.daily) ? flowData.daily : [],
                     byMaterial: Array.isArray(flowData.byMaterial) ? flowData.byMaterial : [],
                     topStock: Array.isArray(flowData.topStock) ? flowData.topStock : [],
                     mostActiveProducts: Array.isArray(flowData.mostActiveProducts) ? flowData.mostActiveProducts : [],
                 });
             })
-            .catch(console.error)
+            .catch((error) => {
+                console.error(error);
+                setLoadError(error?.response?.data?.error || 'Učitavanje izvještaja nije uspjelo.');
+            })
             .finally(() => setLoading(false));
     };
 
     useEffect(() => {
+        setAllowed(isAllowedRole());
         loadData();
     }, []);
 
-    const pie = useMemo(() => {
-        const totalIn = Number(flow.summary?.totalInKg || 0);
-        const totalOut = Number(flow.summary?.totalOutKg || 0);
-        const total = Math.max(1, totalIn + totalOut);
-        const inPercent = totalIn / total;
-        const radius = 52;
-        const circumference = 2 * Math.PI * radius;
-        return {
-            inStroke: circumference * inPercent,
-            outStroke: circumference - (circumference * inPercent),
-            circumference,
-            totalIn,
-            totalOut,
-        };
-    }, [flow.summary]);
+    const chartData = useMemo(() => (flow.daily || []).map((row) => ({
+        key: row.date,
+        label: fmtDayShort(row.date),
+        tooltipLabel: fmtDate(row.date),
+        values: { inKg: row.inKg, outKg: row.outKg },
+    })), [flow.daily]);
+
+    const totalIn = Number(flow.summary?.totalInKg || 0);
+    const totalOut = Number(flow.summary?.totalOutKg || 0);
+    const maxActive = Math.max(1, ...flow.mostActiveProducts.map((r) => Number(r.inKg || 0) + Number(r.outKg || 0)));
 
     const exportExcel = () => {
         const wb = XLSX.utils.book_new();
@@ -340,191 +372,203 @@ export default function ReportsPage() {
     };
 
     const applyPreset = (preset) => {
+        setActivePreset(preset);
         const range = resolveRangePreset(preset);
         const merged = { ...filters, ...range };
         setFilters(merged);
         loadData(merged);
     };
 
+    if (allowed === null) {
+        return <div className="ui-page"><PageHeader title="Analitika ulaz/izlaz" subtitle="Učitavanje..." /></div>;
+    }
+
     if (!allowed) {
         return (
-            <div className={styles.container}>
-                <div style={{ padding: '1rem', border: '1px solid #f59e0b', background: '#fffbeb', color: '#92400e' }}>
-                    Ovu stranicu mogu vidjeti samo vlasnik, admin i manager.
-                </div>
+            <div className="ui-page">
+                <PageHeader title="Analitika ulaz/izlaz" />
+                <Alert tone="warning">Ovu stranicu mogu vidjeti samo vlasnik, admin i manager.</Alert>
             </div>
         );
     }
 
-    if (loading) return <div style={{ padding: '2rem' }}>Učitavanje...</div>;
+    const historyRows = flow.history.slice(0, historyLimit);
 
     return (
-        <div className={styles.container}>
-            <div className={`${styles.header} responsive-row`}>
-                <h1 className={styles.title}>Izvještaji i Analitika</h1>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn-primary" style={{ padding: '7px 12px' }} onClick={printReport}>Print (JANUAR2026 stil)</button>
-                    <button style={{ padding: '7px 12px', border: '1px solid #0f766e', background: '#f0fdfa', color: '#0f766e', cursor: 'pointer' }} onClick={exportExcel}>
-                        Excel tabela
-                    </button>
-                </div>
-            </div>
+        <div className="ui-page">
+            <div className="print-only" style={{ fontSize: 16, fontWeight: 700 }}>Analitika ulaz/izlaz · {fmtDate(filters.from)} – {fmtDate(filters.to)}</div>
+            <PageHeader
+                title="Analitika ulaz/izlaz"
+                subtitle={`Kretanje robe na skladištu · ${fmtDate(filters.from)} – ${fmtDate(filters.to)}`}
+                actions={(
+                    <>
+                        <Button variant="secondary" icon={FileSpreadsheet} onClick={exportExcel} disabled={loading}>Excel tabela</Button>
+                        <Button icon={Printer} onClick={printReport} disabled={loading}>Štampaj izvještaj</Button>
+                    </>
+                )}
+            />
 
-            <div style={{ background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: '#666', fontWeight: 700 }}>Od datuma</label>
-                    <input type="date" value={filters.from} onChange={(e) => setFilters((prev) => ({ ...prev, from: e.target.value }))} style={{ width: '100%', marginTop: 4, padding: 6 }} />
-                </div>
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: '#666', fontWeight: 700 }}>Do datuma</label>
-                    <input type="date" value={filters.to} onChange={(e) => setFilters((prev) => ({ ...prev, to: e.target.value }))} style={{ width: '100%', marginTop: 4, padding: 6 }} />
-                </div>
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: '#666', fontWeight: 700 }}>Tip</label>
-                    <select value={filters.type} onChange={(e) => setFilters((prev) => ({ ...prev, type: e.target.value }))} style={{ width: '100%', marginTop: 4, padding: 6 }}>
-                        <option value="ALL">Sve</option>
-                        <option value="IN">Ulaz</option>
-                        <option value="OUT">Izlaz</option>
-                    </select>
-                </div>
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: '#666', fontWeight: 700 }}>Pretraga</label>
-                    <input type="text" placeholder="Ime, materijal..." value={filters.search} onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))} style={{ width: '100%', marginTop: 4, padding: 6 }} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
-                    <button className="btn-primary" style={{ padding: '7px 12px' }} onClick={loadData}>Primijeni</button>
-                    <button style={{ padding: '7px 12px', border: '1px solid #cbd5e1', background: '#f8fafc', cursor: 'pointer' }} onClick={() => { const t = new Date().toISOString().slice(0, 10); setFilters({ from: t, to: t, type: 'ALL', search: '' }); }}>Danas</button>
-                </div>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: '1rem' }}>
-                {[
-                    { key: 'today', label: 'Danas' },
-                    { key: '7d', label: '7 dana' },
-                    { key: '14d', label: '14 dana' },
-                    { key: '30d', label: '30 dana' },
-                    { key: '6m', label: '6 mjeseci' },
-                    { key: '1y', label: 'Godina' },
-                ].map((preset) => (
-                    <button
-                        key={preset.key}
-                        type="button"
-                        onClick={() => applyPreset(preset.key)}
-                        style={{ padding: '6px 10px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontSize: '12px' }}
-                    >
-                        {preset.label}
-                    </button>
-                ))}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-                {dashboardStats && Object.entries(dashboardStats).map(([key, value]) => (
-                    <div key={key} style={{ background: 'white', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #e0e0e0' }}>
-                        <h3 style={{ textTransform: 'uppercase', color: '#666', fontSize: '0.8rem', letterSpacing: '0.5px' }}>{labels[key] || key}</h3>
-                        <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: '0.5rem 0 0 0', color: '#333' }}>{value}</p>
+            <Card bodyClassName="no-print">
+                <div className="stack" style={{ gap: 14 }}>
+                    <Segmented options={PRESETS} value={activePreset} onChange={applyPreset} ariaLabel="Period" />
+                    <div className="ui-form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', alignItems: 'end' }}>
+                        <Field label="Od datuma">
+                            <input type="date" className="ui-input" value={filters.from} onChange={(e) => { setActivePreset('custom'); setFilters((prev) => ({ ...prev, from: e.target.value })); }} />
+                        </Field>
+                        <Field label="Do datuma">
+                            <input type="date" className="ui-input" value={filters.to} onChange={(e) => { setActivePreset('custom'); setFilters((prev) => ({ ...prev, to: e.target.value })); }} />
+                        </Field>
+                        <Field label="Tip">
+                            <Segmented options={TYPE_OPTIONS} value={filters.type} onChange={(value) => setFilters((prev) => ({ ...prev, type: value }))} ariaLabel="Tip transakcije" />
+                        </Field>
+                        <Field label="Pretraga">
+                            <input
+                                type="text"
+                                className="ui-input"
+                                placeholder="Radnik, materijal, napomena..."
+                                value={filters.search}
+                                onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') loadData(); }}
+                            />
+                        </Field>
+                        <Button icon={Search} onClick={() => loadData()} disabled={loading}>Primijeni</Button>
                     </div>
-                ))}
-                {!dashboardStats && <p>Nema dostupnih izvještaja.</p>}
-            </div>
+                </div>
+            </Card>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
-                <div style={{ background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem' }}>
-                    <h3 style={{ marginTop: 0 }}>Ulaz / Izlaz (KG)</h3>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                        <svg width="150" height="150" viewBox="0 0 140 140" aria-label="Ulaz izlaz pie">
-                            <circle cx="70" cy="70" r="52" fill="none" stroke="#e2e8f0" strokeWidth="20" />
-                            <circle cx="70" cy="70" r="52" fill="none" stroke="#16a34a" strokeWidth="20" strokeDasharray={`${pie.inStroke} ${pie.circumference}`} transform="rotate(-90 70 70)" />
-                            <circle cx="70" cy="70" r="52" fill="none" stroke="#dc2626" strokeWidth="20" strokeDasharray={`${pie.outStroke} ${pie.circumference}`} strokeDashoffset={-pie.inStroke} transform="rotate(-90 70 70)" />
-                        </svg>
-                        <div>
-                            <div style={{ color: '#16a34a', fontWeight: 700 }}>Ulaz: {pie.totalIn.toLocaleString()} KG</div>
-                            <div style={{ color: '#dc2626', fontWeight: 700 }}>Izlaz: {pie.totalOut.toLocaleString()} KG</div>
-                            <div style={{ color: '#64748b', marginTop: 8 }}>Transakcija: {Number(flow.summary?.transactionCount || 0)}</div>
+            {loadError && <Alert tone="danger">{loadError}</Alert>}
+
+            <div style={{ opacity: loading ? 0.55 : 1, transition: 'opacity .2s', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div className="ui-kpi-grid">
+                    <StatCard label="Ukupno ulaz" icon={ArrowDownToLine} value={fmtWeight(totalIn)} hint={fmtKg(totalIn)} loading={loading && !flow.summary} />
+                    <StatCard label="Ukupno izlaz" icon={ArrowUpFromLine} tone="orange" value={fmtWeight(totalOut)} hint={fmtKg(totalOut)} loading={loading && !flow.summary} />
+                    <StatCard label="Neto promjena" icon={ArrowLeftRight} tone={totalIn - totalOut >= 0 ? 'success' : 'danger'} value={`${totalIn - totalOut >= 0 ? '+' : ''}${fmtWeight(totalIn - totalOut)}`} hint="ulaz − izlaz" loading={loading && !flow.summary} />
+                    <StatCard label="Transakcija" icon={ArrowLeftRight} value={fmtNum(flow.summary?.transactionCount)} loading={loading && !flow.summary} />
+                    <StatCard label="Dobavljači" icon={Factory} value={fmtNum(dashboardStats?.supplierCount)} hint="ukupno u sistemu" loading={loading && !dashboardStats} />
+                    <StatCard label="Kupci" icon={Users} value={fmtNum(dashboardStats?.customerCount)} hint="ukupno u sistemu" loading={loading && !dashboardStats} />
+                </div>
+
+                <Card title="Ulaz i izlaz po danima" subtitle="Knjiženja na skladištu (kg)">
+                    {chartData.length === 0 ? (
+                        <EmptyState title="Nema kretanja u periodu" text="Odaberi drugi period ili tip." />
+                    ) : (
+                        <div className="stack" style={{ gap: 12 }}>
+                            <Legend series={FLOW_SERIES} />
+                            <ColumnChart
+                                data={chartData}
+                                series={FLOW_SERIES}
+                                height={260}
+                                formatValue={(v) => fmtKg(v)}
+                                formatAxis={(v) => fmtCompact(v)}
+                                ariaLabel="Ulaz i izlaz po danima"
+                            />
                         </div>
-                    </div>
+                    )}
+                </Card>
+
+                <div className="grid-2">
+                    <Card title="Najaktivniji materijali" subtitle="Ukupno kretanje u periodu" flush>
+                        {flow.mostActiveProducts.length === 0 ? (
+                            <EmptyState title="Nema podataka za period" />
+                        ) : (
+                            <div className="ui-table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Materijal</th>
+                                            <th style={{ width: '34%' }}>Udio</th>
+                                            <th className="num">Ulaz (kg)</th>
+                                            <th className="num">Izlaz (kg)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {flow.mostActiveProducts.map((row, idx) => {
+                                            const inPct = (Number(row.inKg || 0) / maxActive) * 100;
+                                            const outPct = (Number(row.outKg || 0) / maxActive) * 100;
+                                            return (
+                                                <tr key={`${row.material}-${idx}`}>
+                                                    <td style={{ fontWeight: 600 }}>{row.material}</td>
+                                                    <td>
+                                                        <div className="rp-split" title={`Ulaz ${fmtKg(row.inKg)} · Izlaz ${fmtKg(row.outKg)}`}>
+                                                            <span style={{ width: `${inPct}%`, background: 'var(--series-1)' }} />
+                                                            <span style={{ width: `${outPct}%`, background: 'var(--series-2)' }} />
+                                                        </div>
+                                                    </td>
+                                                    <td className="num">{fmtNum(row.inKg)}</td>
+                                                    <td className="num">{fmtNum(row.outKg)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </Card>
+                    <Card title="Najviše na stanju" subtitle="Trenutno stanje skladišta (kg)">
+                        <BarList
+                            items={flow.topStock.map((row, idx) => ({ key: `${row.material}-${idx}`, label: row.material, value: row.kg }))}
+                            formatValue={(v) => fmtWeight(v)}
+                            emptyText="Skladište je prazno."
+                        />
+                    </Card>
                 </div>
-                <div style={{ background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem' }}>
-                    <h3 style={{ marginTop: 0 }}>Proizvodi sa najviše stanja</h3>
-                    <div style={{ display: 'grid', gap: 8 }}>
-                        {flow.topStock.map((row) => {
-                            const max = Math.max(1, ...flow.topStock.map((r) => Number(r.kg || 0)));
-                            const width = (Number(row.kg || 0) / max) * 100;
-                            return (
-                                <div key={row.material}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                                        <span>{row.material}</span>
-                                        <span>{Number(row.kg || 0).toLocaleString()} KG</span>
-                                    </div>
-                                    <div style={{ height: 8, background: '#e2e8f0', borderRadius: 99 }}>
-                                        <div style={{ width: `${width}%`, height: 8, borderRadius: 99, background: '#2563eb' }} />
-                                    </div>
+
+                <Card
+                    title="Historija transakcija"
+                    subtitle={`${fmtNum(flow.history.length)} transakcija${flow.history.length > historyRows.length ? ` · prikazano ${fmtNum(historyRows.length)}` : ''}`}
+                    flush
+                >
+                    {flow.history.length === 0 ? (
+                        <EmptyState title="Nema transakcija za odabrane filtere" />
+                    ) : (
+                        <>
+                            <div className="ui-table-wrap" style={{ maxHeight: 560 }}>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Vrijeme</th>
+                                            <th>Tip</th>
+                                            <th>Radnik</th>
+                                            <th>Materijal</th>
+                                            <th>Lokacija</th>
+                                            <th className="num">Količina</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {historyRows.map((row) => (
+                                            <tr key={row.id}>
+                                                <td>{fmtDateTime(row.createdAt)}</td>
+                                                <td>
+                                                    <Badge tone={row.type === 'IN' ? 'info' : row.type === 'OUT' ? 'orange' : 'neutral'}>
+                                                        {row.type === 'IN' ? 'Ulaz' : row.type === 'OUT' ? 'Izlaz' : 'Korekcija'}
+                                                    </Badge>
+                                                </td>
+                                                <td>{row.actorName}</td>
+                                                <td>{row.materialCode} · {row.materialName}</td>
+                                                <td className="muted">{row.companyName || '-'}</td>
+                                                <td className="num" style={{ fontWeight: 600 }}>{fmtKg(row.quantityKg)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {flow.history.length > historyRows.length && (
+                                <div className="row" style={{ justifyContent: 'center', padding: 12, borderTop: '1px solid var(--border)' }}>
+                                    <Button variant="secondary" onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE)}>
+                                        Prikaži još ({fmtNum(flow.history.length - historyRows.length)})
+                                    </Button>
                                 </div>
-                            );
-                        })}
-                    </div>
-                </div>
+                            )}
+                        </>
+                    )}
+                </Card>
             </div>
 
-            <div style={{ background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', marginTop: '1rem' }}>
-                <h3 style={{ marginTop: 0 }}>Najaktuelniji proizvodi (kretanje u periodu)</h3>
-                <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr>
-                                <th style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Materijal</th>
-                                <th style={{ textAlign: 'right', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Ukupno kretanje (KG)</th>
-                                <th style={{ textAlign: 'right', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Ulaz (KG)</th>
-                                <th style={{ textAlign: 'right', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Izlaz (KG)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {flow.mostActiveProducts.map((row) => (
-                                <tr key={row.material}>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px' }}>{row.material}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px', textAlign: 'right', fontFamily: 'monospace' }}>{Number(row.movementKg || 0).toLocaleString()}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px', textAlign: 'right', color: '#16a34a' }}>{Number(row.inKg || 0).toLocaleString()}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px', textAlign: 'right', color: '#dc2626' }}>{Number(row.outKg || 0).toLocaleString()}</td>
-                                </tr>
-                            ))}
-                            {!flow.mostActiveProducts.length && (
-                                <tr><td colSpan={4} style={{ padding: '12px', color: '#64748b' }}>Nema podataka za period.</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div style={{ background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, padding: '1rem', marginTop: '1rem' }}>
-                <h3 style={{ marginTop: 0 }}>Historija transakcija (ulaz/izlaz)</h3>
-                <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr>
-                                <th style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Vrijeme</th>
-                                <th style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Tip</th>
-                                <th style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Radnik</th>
-                                <th style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>Materijal</th>
-                                <th style={{ textAlign: 'right', borderBottom: '1px solid #e2e8f0', padding: '8px' }}>KG</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {flow.history.map((row) => (
-                                <tr key={row.id}>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px' }}>{new Date(row.createdAt).toLocaleString()}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px', color: row.type === 'IN' ? '#16a34a' : '#dc2626', fontWeight: 700 }}>{row.type}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px' }}>{row.actorName}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px' }}>{row.materialCode} - {row.materialName}</td>
-                                    <td style={{ borderBottom: '1px solid #f1f5f9', padding: '8px', textAlign: 'right', fontFamily: 'monospace' }}>{Number(row.quantityKg || 0).toLocaleString()}</td>
-                                </tr>
-                            ))}
-                            {!flow.history.length && (
-                                <tr>
-                                    <td colSpan={5} style={{ padding: '12px', color: '#64748b' }}>Nema transakcija za odabrane filtere.</td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            <style>{`
+                .rp-split { display: flex; gap: 2px; height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+                .rp-split span { display: block; height: 100%; }
+                .rp-split span:first-child { border-radius: 999px 0 0 999px; }
+            `}</style>
         </div>
     );
 }

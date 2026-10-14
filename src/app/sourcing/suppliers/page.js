@@ -1,20 +1,36 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { CheckCircle2, ChevronRight, Factory, Pencil, Plus, Scale } from 'lucide-react';
 import Modal from '@/components/UI/Modal';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import StatCard from '@/components/UI/StatCard';
+import Button from '@/components/UI/Button';
+import Alert from '@/components/UI/Alert';
+import Segmented from '@/components/UI/Segmented';
+import SearchInput from '@/components/UI/SearchInput';
+import EmptyState from '@/components/UI/EmptyState';
+import { Badge } from '@/components/UI/Badge';
+import SupplierFormFields from '@/components/Suppliers/SupplierFormFields';
 import api from '@/lib/api';
+import { fmtMoney, fmtNum } from '@/lib/format';
 import { normalizeApiList } from '@/lib/materialsAdapter';
-
-const LABEL = { fontSize: '11px', fontWeight: 700 };
-const INPUT = { width: '100%', padding: '6px', marginTop: '4px' };
+import { bonitetTone, EMPTY_SUPPLIER_FORM, supplierFormToPayload, supplierToForm } from '@/lib/suppliers';
 
 export default function SuppliersPage() {
+    const router = useRouter();
     const [suppliersList, setSuppliersList] = useState([]);
+    const [listLoading, setListLoading] = useState(true);
     const [showNew, setShowNew] = useState(false);
     const [showEdit, setShowEdit] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState(null);
     const [search, setSearch] = useState('');
+    const [activeFilter, setActiveFilter] = useState('active');
     const [loading, setLoading] = useState(false);
-    const [formData, setFormData] = useState({ name: '', jib: '', type: 'Industrija', pdv: true, city: '', address: '', phone: '', email: '', bonitet: 'B', paymentDays: 15 });
+    const [formError, setFormError] = useState('');
+    const [pageInfo, setPageInfo] = useState('');
+    const [formData, setFormData] = useState(EMPTY_SUPPLIER_FORM);
 
     const loadSuppliers = async () => {
         const res = await api.get('/sourcing/suppliers');
@@ -22,166 +38,181 @@ export default function SuppliersPage() {
     };
 
     useEffect(() => {
-        loadSuppliers().catch(() => setSuppliersList([]));
+        loadSuppliers().catch(() => setSuppliersList([])).finally(() => setListLoading(false));
     }, []);
 
-    const filtered = useMemo(
-        () => suppliersList.filter((s) => String(s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.city || '').toLowerCase().includes(search.toLowerCase())),
-        [suppliersList, search]
-    );
+    const filtered = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return suppliersList.filter((s) => {
+            if (activeFilter === 'active' && s.active === false) return false;
+            if (activeFilter === 'inactive' && s.active !== false) return false;
+            if (!q) return true;
+            return [s.name, s.city, s.jib, s.code, s.phone, s.email].join(' ').toLowerCase().includes(q);
+        });
+    }, [suppliersList, search, activeFilter]);
+
+    const stats = useMemo(() => ({
+        active: suppliersList.filter((s) => s.active !== false).length,
+        pdv: suppliersList.filter((s) => s.pdv && s.active !== false).length,
+        bonitetA: suppliersList.filter((s) => s.bonitet === 'A' && s.active !== false).length,
+    }), [suppliersList]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.name?.trim()) return;
+        if (!formData.name?.trim()) {
+            setFormError('Naziv je obavezan.');
+            return;
+        }
         setLoading(true);
+        setFormError('');
         try {
-            await api.post('/sourcing/suppliers', {
-                name: formData.name.trim(),
-                jib: String(formData.jib || '').trim() || null,
-                pdv: Boolean(formData.pdv),
-                type: String(formData.type || 'Industrija'),
-                bonitet: String(formData.bonitet || 'B'),
-                city: String(formData.city || '').trim() || null,
-                address: String(formData.address || '').trim() || null,
-                phone: String(formData.phone || '').trim() || null,
-                email: String(formData.email || '').trim() || null,
-                paymentDays: Number(formData.paymentDays || 15),
-                balance: 0,
-                active: true,
-            });
+            const res = await api.post('/sourcing/suppliers', { ...supplierFormToPayload(formData), balance: 0, active: true });
             await loadSuppliers();
-            setFormData({ name: '', jib: '', type: 'Industrija', pdv: true, city: '', address: '', phone: '', email: '', bonitet: 'B', paymentDays: 15 });
+            setFormData(EMPTY_SUPPLIER_FORM);
             setShowNew(false);
+            setPageInfo(`Dobavljač ${res?.data?.data?.name || ''} je dodan.`);
+        } catch (error) {
+            setFormError(error?.response?.data?.error || 'Dodavanje dobavljača nije uspjelo.');
         } finally {
             setLoading(false);
         }
     };
 
+    const handleOpenNew = () => {
+        setFormData(EMPTY_SUPPLIER_FORM);
+        setFormError('');
+        setShowNew(true);
+    };
+
     const handleOpenEdit = (s) => {
         setEditingSupplier(s);
-        setFormData({ name: s.name, jib: s.jib || '', type: s.type, pdv: s.pdv, city: s.city || '', address: '', phone: s.phone || '', email: '', bonitet: s.bonitet, paymentDays: 15 });
+        // sva polja iz baze (ranije su adresa/email/rok plaćanja bili prazni pa bi ih snimanje obrisalo)
+        setFormData(supplierToForm(s));
+        setFormError('');
         setShowEdit(true);
     };
 
     const handleSaveEdit = async (e) => {
         e.preventDefault();
         if (!editingSupplier) return;
+        if (!formData.name?.trim()) {
+            setFormError('Naziv je obavezan.');
+            return;
+        }
         setLoading(true);
+        setFormError('');
         try {
-            await api.put(`/sourcing/suppliers/${editingSupplier.id}`, {
-                name: String(formData.name || '').trim(),
-                jib: String(formData.jib || '').trim() || null,
-                type: String(formData.type || 'Industrija'),
-                pdv: Boolean(formData.pdv),
-                city: String(formData.city || '').trim() || null,
-                phone: String(formData.phone || '').trim() || null,
-                bonitet: String(formData.bonitet || 'B'),
-                address: String(formData.address || '').trim() || null,
-                email: String(formData.email || '').trim() || null,
-                paymentDays: Number(formData.paymentDays || 15),
-            });
+            await api.put(`/sourcing/suppliers/${editingSupplier.id}`, supplierFormToPayload(formData));
             await loadSuppliers();
             setShowEdit(false);
+            setPageInfo(`Dobavljač ${formData.name} je sačuvan.`);
             setEditingSupplier(null);
+        } catch (error) {
+            setFormError(error?.response?.data?.error || 'Čuvanje nije uspjelo.');
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2 style={{ fontSize: '14px', textTransform: 'uppercase' }}>Dobavljači (CRM)</h2>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                    <input type="text" placeholder="Pretraži..." value={search} onChange={e => setSearch(e.target.value)} style={{ padding: '6px 10px', width: '200px' }} />
-                    <button className="btn-primary" onClick={() => setShowNew(true)}>+ NOVI DOBAVLJAČ</button>
-                </div>
-            </div>
-            <div className="scada-panel" style={{ flex: 1, overflow: 'auto' }}>
-                <table>
-                    <thead><tr><th>ID</th><th>NAZIV</th><th>JIB</th><th>TIP</th><th>GRAD</th><th>BONITET</th><th style={{ textAlign: 'right' }}>BILANS (BAM)</th><th>PDV</th></tr></thead>
-                    <tbody>
-                        {filtered.map(s => (
-                            <tr key={s.id}>
-                                <td className="font-mono">{s.id}</td>
-                                <td style={{ fontWeight: 600 }}>{s.name}</td>
-                                <td className="font-mono" style={{ fontSize: '11px' }}>{s.jib}</td>
-                                <td style={{ fontSize: '11px' }}>{s.type}</td>
-                                <td>{s.city}</td>
-                                <td><span style={{ padding: '2px 6px', background: s.bonitet === 'A' ? '#dcfce7' : '#fef3c7', color: s.bonitet === 'A' ? '#15803d' : '#b45309', fontWeight: 700, fontSize: '11px' }}>{s.bonitet}</span></td>
-                                <td className="font-mono" style={{ textAlign: 'right', fontWeight: 600, color: Number(s.balance || 0) < 0 ? 'var(--danger-color)' : 'var(--success-color)' }}>{Number(s.balance || 0).toLocaleString()}</td>
-                                <td>
-                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                        <span style={{ fontSize: '11px' }}>{s.pdv ? 'DA' : 'NE'}</span>
-                                        <button type="button" onClick={(ev) => { ev.stopPropagation(); ev.preventDefault(); handleOpenEdit(s); }} style={{ padding: '2px 8px', fontSize: '10px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>✎</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+        <div className="ui-page">
+            <PageHeader
+                title="Dobavljači"
+                subtitle="Partneri od kojih otkupljujemo materijal"
+                actions={<Button icon={Plus} onClick={handleOpenNew}>Novi dobavljač</Button>}
+            />
+
+            {pageInfo && <Alert tone="success" onClose={() => setPageInfo('')}>{pageInfo}</Alert>}
+
+            <div className="ui-kpi-grid">
+                <StatCard label="Aktivni dobavljači" icon={Factory} value={fmtNum(stats.active)} hint={`${fmtNum(suppliersList.length)} ukupno`} loading={listLoading} />
+                <StatCard label="PDV obveznici" icon={CheckCircle2} tone="success" value={fmtNum(stats.pdv)} loading={listLoading} />
+                <StatCard label="Bonitet A" icon={Scale} value={fmtNum(stats.bonitetA)} hint="odličan bonitet" loading={listLoading} />
             </div>
 
-            <Modal open={showNew} onClose={() => setShowNew(false)} title="Novi Dobavljač" width={750}>
-                <form onSubmit={handleSubmit}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div><label style={LABEL}>Naziv Firme / Ime *</label><input type="text" style={INPUT} placeholder="npr. Zenica Steelworks d.o.o." value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required /></div>
-                        <div><label style={LABEL}>JIB *</label><input type="text" className="font-mono" style={INPUT} placeholder="4218109230004" value={formData.jib} onChange={e => setFormData({ ...formData, jib: e.target.value })} /></div>
-                        <div><label style={LABEL}>Tip Partnera *</label><select style={INPUT} value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })}>
-                            <option value="Industrija">Industrija (Firma)</option>
-                            <option value="Sakupljač">Sakupljač</option>
-                            <option value="Komunalno">Komunalno</option>
-                            <option value="Fizičko Lice">Fizičko Lice</option>
-                        </select></div>
-                        <div><label style={LABEL}>PDV Obveznik</label><select style={INPUT} value={formData.pdv ? 'DA' : 'NE'} onChange={e => setFormData({ ...formData, pdv: e.target.value === 'DA' })}>
-                            <option value="DA">DA</option>
-                            <option value="NE">NE</option>
-                        </select></div>
-                        <div><label style={LABEL}>Grad</label><input type="text" style={INPUT} value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} /></div>
-                        <div><label style={LABEL}>Adresa</label><input type="text" style={INPUT} value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} /></div>
-                        <div><label style={LABEL}>Telefon</label><input type="text" className="font-mono" style={INPUT} placeholder="+387 xx xxx xxx" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} /></div>
-                        <div><label style={LABEL}>Email</label><input type="email" style={INPUT} value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} /></div>
-                        <div><label style={LABEL}>Bonitet</label><select style={INPUT} value={formData.bonitet} onChange={e => setFormData({ ...formData, bonitet: e.target.value })}>
-                            <option value="A">A — Odličan</option>
-                            <option value="B">B — Prosječan</option>
-                            <option value="C">C — Rizičan</option>
-                        </select></div>
-                        <div><label style={LABEL}>Rok Plaćanja (dana)</label><input type="number" className="font-mono" style={INPUT} value={formData.paymentDays} onChange={e => setFormData({ ...formData, paymentDays: e.target.value })} /></div>
+            <Card flush>
+                <div className="ui-toolbar" style={{ padding: 14, borderBottom: '1px solid var(--border)' }}>
+                    <Segmented
+                        options={[{ value: 'active', label: 'Aktivni' }, { value: 'inactive', label: 'Neaktivni' }, { value: 'all', label: 'Svi' }]}
+                        value={activeFilter}
+                        onChange={setActiveFilter}
+                        ariaLabel="Status dobavljača"
+                    />
+                    <SearchInput className="grow" value={search} onChange={setSearch} placeholder="Pretraži naziv, grad, JIB, telefon..." />
+                </div>
+                {listLoading ? (
+                    <div className="stack" style={{ padding: 18, gap: 10 }}>
+                        {[0, 1, 2].map((i) => <div key={i} className="ui-skeleton" style={{ height: 40 }} />)}
                     </div>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                        <button type="button" onClick={() => setShowNew(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                        <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'SAČUVAJ DOBAVLJAČA'}</button>
+                ) : filtered.length === 0 ? (
+                    <EmptyState icon={Factory} title={suppliersList.length ? 'Nema dobavljača za odabrane filtere' : 'Još nema dobavljača'} />
+                ) : (
+                    <div className="ui-table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Šifra</th>
+                                    <th>Naziv</th>
+                                    <th>JIB</th>
+                                    <th>Tip</th>
+                                    <th>Grad</th>
+                                    <th>Kontakt</th>
+                                    <th>Bonitet</th>
+                                    <th>PDV</th>
+                                    <th className="num">Bilans</th>
+                                    <th style={{ width: 80 }} />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map((s) => (
+                                    <tr key={s.id} onClick={() => router.push(`/sourcing/suppliers/${s.id}`)} style={{ cursor: 'pointer', opacity: s.active === false ? 0.6 : 1 }}>
+                                        <td className="font-code" style={{ fontSize: 12 }}>{s.code}</td>
+                                        <td style={{ fontWeight: 600 }}>
+                                            <span className="row" style={{ gap: 6 }}>
+                                                {s.name}
+                                                {s.active === false && <Badge tone="neutral">neaktivan</Badge>}
+                                            </span>
+                                        </td>
+                                        <td className="font-code" style={{ fontSize: 12 }}>{s.jib || <span className="muted">—</span>}</td>
+                                        <td className="muted">{s.type || '—'}</td>
+                                        <td>{s.city || <span className="muted">—</span>}</td>
+                                        <td className="muted" style={{ fontSize: 12 }}>{s.phone || s.email || '—'}</td>
+                                        <td><Badge tone={bonitetTone(s.bonitet)}>{s.bonitet || '-'}</Badge></td>
+                                        <td>{s.pdv ? <Badge tone="info">PDV</Badge> : <span className="muted">Ne</span>}</td>
+                                        <td className="num" style={{ fontWeight: 600, color: Number(s.balance || 0) < 0 ? 'var(--danger-ink)' : undefined }}>{fmtMoney(s.balance)}</td>
+                                        <td onClick={(ev) => ev.stopPropagation()}>
+                                            <div className="row" style={{ gap: 2, justifyContent: 'flex-end' }}>
+                                                <Button variant="ghost" size="sm" icon={Pencil} aria-label={`Uredi ${s.name}`} title="Uredi" onClick={() => handleOpenEdit(s)} />
+                                                <Button variant="ghost" size="sm" icon={ChevronRight} aria-label={`Otvori ${s.name}`} title="Profil" href={`/sourcing/suppliers/${s.id}`} />
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+
+            <Modal open={showNew} onClose={() => setShowNew(false)} title="Novi dobavljač" width={760}>
+                <form onSubmit={handleSubmit}>
+                    <SupplierFormFields form={formData} setForm={setFormData} />
+                    {formError && <Alert tone="danger" style={{ marginTop: 14 }}>{formError}</Alert>}
+                    <div className="ui-modal-footer">
+                        <Button variant="secondary" onClick={() => setShowNew(false)}>Odustani</Button>
+                        <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Sačuvaj dobavljača'}</Button>
                     </div>
                 </form>
             </Modal>
 
-            <Modal open={showEdit} onClose={() => { setShowEdit(false); setEditingSupplier(null); }} title="Uredi Dobavljača" width={750}>
+            <Modal open={showEdit} onClose={() => { setShowEdit(false); setEditingSupplier(null); }} title={`Uredi dobavljača`} subtitle={editingSupplier?.code} width={760}>
                 {editingSupplier && (
                     <form onSubmit={handleSaveEdit}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                            <div><label style={LABEL}>Naziv Firme / Ime *</label><input type="text" style={INPUT} value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required /></div>
-                            <div><label style={LABEL}>JIB</label><input type="text" className="font-mono" style={INPUT} value={formData.jib} onChange={e => setFormData({ ...formData, jib: e.target.value })} /></div>
-                            <div><label style={LABEL}>Tip Partnera *</label><select style={INPUT} value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })}>
-                                <option value="Industrija">Industrija (Firma)</option>
-                                <option value="Sakupljač">Sakupljač</option>
-                                <option value="Komunalno">Komunalno</option>
-                                <option value="Fizičko Lice">Fizičko Lice</option>
-                            </select></div>
-                            <div><label style={LABEL}>PDV Obveznik</label><select style={INPUT} value={formData.pdv ? 'DA' : 'NE'} onChange={e => setFormData({ ...formData, pdv: e.target.value === 'DA' })}>
-                                <option value="DA">DA</option>
-                                <option value="NE">NE</option>
-                            </select></div>
-                            <div><label style={LABEL}>Grad</label><input type="text" style={INPUT} value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} /></div>
-                            <div><label style={LABEL}>Telefon</label><input type="text" className="font-mono" style={INPUT} value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} /></div>
-                            <div><label style={LABEL}>Bonitet</label><select style={INPUT} value={formData.bonitet} onChange={e => setFormData({ ...formData, bonitet: e.target.value })}>
-                                <option value="A">A — Odličan</option>
-                                <option value="B">B — Prosječan</option>
-                                <option value="C">C — Rizičan</option>
-                            </select></div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                            <button type="button" onClick={() => { setShowEdit(false); setEditingSupplier(null); }} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                            <button type="submit" className="btn-primary" style={{ padding: '8px 20px' }} disabled={loading}>{loading ? 'ČUVANJE...' : 'SAČUVAJ'}</button>
+                        <SupplierFormFields form={formData} setForm={setFormData} />
+                        {formError && <Alert tone="danger" style={{ marginTop: 14 }}>{formError}</Alert>}
+                        <div className="ui-modal-footer">
+                            <Button variant="secondary" onClick={() => { setShowEdit(false); setEditingSupplier(null); }}>Odustani</Button>
+                            <Button type="submit" disabled={loading}>{loading ? 'Čuvanje...' : 'Sačuvaj'}</Button>
                         </div>
                     </form>
                 )}

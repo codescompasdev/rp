@@ -1,8 +1,36 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import {
+    ArrowDownToLine,
+    ArrowUpFromLine,
+    Ban,
+    Check,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    ClipboardList,
+    ListChecks,
+    Package,
+    Pencil,
+    Plus,
+    Printer,
+    RotateCcw,
+    Save,
+    Scale,
+    Trash2,
+    Wifi,
+} from 'lucide-react';
 import Modal from '@/components/UI/Modal';
 import MaterialPicker from '@/components/UI/MaterialPicker';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import EmptyState from '@/components/UI/EmptyState';
+import ProgressBar from '@/components/UI/ProgressBar';
+import { Badge, StatusBadge } from '@/components/UI/Badge';
+import { fmtDate, fmtKg, fmtNum, fmtTime } from '@/lib/format';
 import { defaultScaleConfig, formatWeight, loadScaleConfig } from '@/lib/scaleConfig';
 import { getCurrentRole } from '@/lib/userRole';
 import { getAuthUser } from '@/lib/authStorage';
@@ -21,8 +49,6 @@ function isTerminalTicketStatus(status) {
     return value === 'zatvoren' || value === 'otkazan' || value === 'storniran';
 }
 
-const fmtKg = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
-
 function contractPartnerName(contract) {
     if (!contract) return '';
     return (contract.direction === 'SELL' ? contract.customer?.name : contract.supplier?.name) || '';
@@ -33,53 +59,14 @@ function contractLabel(contract) {
     return `${contract.code} — ${contractPartnerName(contract) || '-'} — ${dir}`;
 }
 
-/* ---------- Zajednički stilovi (veći font, lakše za čitanje) ---------- */
-const FS = {
-    label: '14px',
-    input: '15px',
-    body: '15px',
-    small: '13px',
-    button: '15px',
-    header: '20px',
-    bigNumber: '58px',
-    neto: '30px',
-};
-
-const styles = {
-    label: { fontSize: FS.label, fontWeight: 700, color: '#334155', display: 'block', marginBottom: '5px' },
-    input: {
-        width: '100%', padding: '10px 12px', fontSize: FS.input,
-        border: '1px solid #94a3b8', borderRadius: '6px', background: '#fff',
-    },
-    btn: {
-        padding: '12px 18px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
-        border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer',
-    },
-    btnPrimary: {
-        padding: '12px 18px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
-        border: 'none', background: '#1d4ed8', color: '#fff', cursor: 'pointer',
-    },
-    btnGreen: {
-        padding: '14px 20px', fontSize: '17px', fontWeight: 800, borderRadius: '6px',
-        border: 'none', background: '#15803d', color: '#fff', cursor: 'pointer',
-    },
-    btnDanger: {
-        padding: '10px 16px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
-        border: 'none', background: '#b91c1c', color: '#fff', cursor: 'pointer',
-    },
-    btnAmber: {
-        padding: '10px 16px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
-        border: 'none', background: '#b45309', color: '#fff', cursor: 'pointer',
-    },
-};
-
-/* ---------- Prikaz stanja narudžbe (koliko je ostalo primiti / isporučiti) ---------- */
+/* ---------- Panel narudžbe: koliko je ispunjeno i koliko je ostalo ---------- */
 function ContractInfo({ contract, materialId, netKg = 0 }) {
     if (!contract) return null;
     const items = contract.items || [];
     const isTotal = contract.qtyMode === 'TOTAL';
     const isSell = contract.direction === 'SELL';
     const tol = Number(contract.tolerance || 0);
+    const pending = Math.max(0, Number(netKg) || 0);
 
     const cur = items.find((i) => i.materialId === materialId);
     const curPlanned = cur && cur.qtyKg !== null && cur.qtyKg !== undefined ? Number(cur.qtyKg) : null;
@@ -91,50 +78,119 @@ function ContractInfo({ contract, materialId, netKg = 0 }) {
     const limitPlanned = isTotal ? totalPlanned : curPlanned;
     const limitRemaining = isTotal ? totalRemaining : curRemaining;
     const allowed = limitPlanned !== null && limitRemaining !== null ? limitRemaining + (limitPlanned * tol) / 100 : null;
-    const over = allowed !== null && Number(netKg) > allowed;
+    const over = allowed !== null && pending > allowed;
     const verb = isSell ? 'za isporučiti' : 'za primiti';
 
     return (
-        <div style={{ background: '#1e293b', border: `1px solid ${over ? '#f59e0b' : '#334155'}`, borderRadius: '8px', padding: '12px 16px', fontSize: FS.small }}>
-            <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: FS.body, marginBottom: '6px' }}>
-                Narudžba {contract.code} — {isSell ? 'PRODAJA' : 'NABAVKA'} — {contractPartnerName(contract) || '-'}
-            </div>
-            {isTotal ? (
-                <div style={{ color: '#cbd5e1' }}>
-                    Ukupno: <b>{fmtKg(totalPlanned)} kg</b> · Ispunjeno: <b>{fmtKg(contract.doneKg)} kg</b> ·{' '}
-                    <b style={{ color: '#10b981' }}>Preostalo {verb}: {fmtKg(Math.max(0, totalRemaining))} kg</b>
-                </div>
-            ) : (
-                <div style={{ display: 'grid', gap: '2px', color: '#cbd5e1' }}>
-                    {items.map((i) => {
-                        const rem = i.qtyKg !== null && i.qtyKg !== undefined ? Number(i.qtyKg) - Number(i.doneKg || 0) : null;
+        <Card
+            title={`Narudžba ${contract.code}`}
+            subtitle={`${isSell ? 'Prodaja' : 'Nabavka'} · ${contractPartnerName(contract) || '-'}`}
+            icon={ClipboardList}
+            actions={tol > 0 ? <Badge tone="outline">Tolerancija {fmtNum(tol, 2)}%</Badge> : null}
+        >
+            <div className="stack" style={{ gap: 16 }}>
+                {isTotal ? (
+                    <ProgressBar
+                        size="lg"
+                        label="Ukupno na narudžbi"
+                        valueText={`${fmtNum(contract.doneKg)} / ${fmtNum(totalPlanned)} kg`}
+                        value={Number(contract.doneKg || 0)}
+                        pending={pending}
+                        max={totalPlanned}
+                        tolerancePct={tol}
+                        footLeft={pending > 0 ? `+ ${fmtKg(pending)} ovo vaganje` : `Ispunjeno ${fmtKg(contract.doneKg)}`}
+                        footRight={`Preostalo ${verb}: ${fmtKg(Math.max(0, totalRemaining - pending))}`}
+                    />
+                ) : null}
+                {isTotal && items.length > 0 && (
+                    <div style={{ display: 'grid', gap: 6 }}>
+                        {items.map((i) => {
+                            const active = i.materialId === materialId;
+                            return (
+                                <div key={i.id} className="row-between" style={{ fontSize: 12.5, fontWeight: active ? 700 : 400 }}>
+                                    <span className="row" style={{ gap: 6, minWidth: 0 }}>
+                                        {active && <Badge tone="info">Na vagi</Badge>}
+                                        <span>{i.material?.code || '-'} · {i.material?.name || ''}</span>
+                                    </span>
+                                    <span className="font-mono">{fmtKg(i.doneKg)}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                {!isTotal && (
+                    items.map((i) => {
+                        const planned = i.qtyKg !== null && i.qtyKg !== undefined ? Number(i.qtyKg) : null;
+                        const done = Number(i.doneKg || 0);
                         const active = i.materialId === materialId;
+                        const extra = active ? pending : 0;
                         return (
-                            <div key={i.id} style={{ fontWeight: active ? 800 : 400, color: active ? '#fff' : '#cbd5e1' }}>
-                                {active ? '▶ ' : ''}{i.material?.code || '-'} — {i.material?.name || ''}: {fmtKg(i.doneKg)} / {fmtKg(i.qtyKg)} kg
-                                {rem !== null && <span style={{ color: '#10b981' }}> (preostalo {fmtKg(Math.max(0, rem))} kg)</span>}
+                            <div key={i.id} className={`gate-order-line ${active ? 'is-active' : ''}`}>
+                                <ProgressBar
+                                    label={(
+                                        <span className="row" style={{ gap: 6 }}>
+                                            {active && <Badge tone="info">Na vagi</Badge>}
+                                            <span>{i.material?.code || '-'} · {i.material?.name || ''}</span>
+                                        </span>
+                                    )}
+                                    valueText={planned !== null ? `${fmtNum(done)} / ${fmtNum(planned)} kg` : fmtKg(done)}
+                                    value={done}
+                                    pending={extra}
+                                    max={planned || 0}
+                                    tolerancePct={tol}
+                                    footLeft={extra > 0 ? `+ ${fmtKg(extra)} ovo vaganje` : ''}
+                                    footRight={planned !== null ? `Preostalo ${verb}: ${fmtKg(Math.max(0, planned - done - extra))}` : ''}
+                                />
                             </div>
                         );
-                    })}
-                </div>
-            )}
-            {tol > 0 && <div style={{ color: '#94a3b8', marginTop: '4px' }}>Tolerancija: {tol}%</div>}
-            {over && (
-                <div style={{ marginTop: '6px', color: '#fde68a', fontWeight: 700 }}>
-                    Upozorenje: neto ({fmtKg(netKg)} kg) prelazi preostalu količinu uz toleranciju ({fmtKg(allowed)} kg).
-                </div>
-            )}
-            {!isTotal && !cur && materialId && (
-                <div style={{ marginTop: '6px', color: '#fde68a', fontWeight: 700 }}>
-                    Odabrani materijal nije na ovoj narudžbi.
-                </div>
-            )}
-        </div>
+                    })
+                )}
+                {over && (
+                    <Alert tone="warning">
+                        Neto ({fmtKg(pending)}) prelazi preostalu količinu uz toleranciju ({fmtKg(allowed)}).
+                    </Alert>
+                )}
+                {!isTotal && !cur && materialId && (
+                    <Alert tone="warning">Odabrani materijal nije na ovoj narudžbi.</Alert>
+                )}
+            </div>
+        </Card>
+    );
+}
+
+/* ---------- Korak vaganja (1. / 2. mjerenje) ---------- */
+function WeighStep({ index, title, valueKg, done, disabled, onClick, hint }) {
+    return (
+        <button
+            type="button"
+            className="gate-step"
+            data-state={done ? 'done' : disabled ? 'locked' : 'ready'}
+            onClick={onClick}
+            disabled={disabled || done}
+        >
+            <span className="gate-step-num">{done ? <Check size={16} strokeWidth={3} /> : index}</span>
+            <span className="gate-step-body">
+                <span className="gate-step-title">{title}</span>
+                <span className="gate-step-value">{fmtNum(valueKg)} <small>kg</small></span>
+                <span className="gate-step-hint">{done ? 'Sačuvano' : hint}</span>
+            </span>
+        </button>
     );
 }
 
 export default function GatePage() {
     const authUser = getAuthUser();
+    // ime vagara i sat samo u pregledniku (server ih ne zna → bez hydration greške)
+    const [clockLabel, setClockLabel] = useState('');
+    useEffect(() => {
+        const tick = () => {
+            const d = new Date();
+            setClockLabel(`Vagar: ${getAuthUser()?.name || '-'} · ${fmtDate(d)} ${fmtTime(d)}`);
+        };
+        tick();
+        const timer = setInterval(tick, 30000);
+        return () => clearInterval(timer);
+    }, []);
     const [role, setRole] = useState('worker');
     const [isCompact, setIsCompact] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
@@ -216,7 +272,7 @@ export default function GatePage() {
                 ...(listDateTo ? { dateTo: listDateTo } : {}),
             },
         });
-        const ticketData = normalizeApiList(ticketRes).filter((t) => t.type !== 'POS');
+        const ticketData = normalizeApiList(ticketRes).filter((t) => t.type !== 'POS' && t.type !== 'POS_OUT');
         setTickets(ticketData);
         setSelectedTicketId((prev) => {
             if (prev && ticketData.some((t) => t.id === prev)) return prev;
@@ -1084,422 +1140,421 @@ export default function GatePage() {
     const canGateCancel = activeTicket?.id && !isTicketClosed && !isTicketVoidOrCancelled;
     const canGateVoid = activeTicket?.id && isTicketClosed && !isTicketVoidOrCancelled && (activeTicket.type === 'IN' || activeTicket.type === 'OUT');
     const displayType = isNewMode ? newTicketForm.transactionType : (activeTicket?.type || 'IN');
-    const now = new Date();
     const contractLocked = !isNewMode && (isTicketClosed || isTicketVoidOrCancelled);
     const contractItems = selectedContract?.items || [];
 
+    const stepOneTitle = isOutboundFlow ? 'Prazan (tara)' : 'Pun (bruto)';
+    const stepTwoTitle = isOutboundFlow ? 'Pun (bruto)' : 'Prazan (tara)';
+    const stepOneKg = isOutboundFlow ? Number(activeTicket?.tare || 0) : Number(activeTicket?.gross || 0);
+    const stepTwoKg = isOutboundFlow ? Number(activeTicket?.gross || 0) : Number(activeTicket?.tare || 0);
+    const pendingNetForOrder = !isNewMode && !isTicketClosed && !isTicketVoidOrCancelled ? Number(activeTicket?.net || 0) : 0;
+    const signalTone = scaleSignal.signalAvailable ? 'success' : 'warning';
+    const currentMaterialLabel = isNewMode
+        ? (selectedMaterial ? formatPickedMaterial(selectedMaterial) : '')
+        : (materials.find((m) => m.id === ticketDraft.materialId) ? formatPickedMaterial(materials.find((m) => m.id === ticketDraft.materialId)) : '');
+
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%', fontSize: FS.body }}>
-
-            {/* ---------- Gornja traka: lista + navigacija ---------- */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between' }}>
-                <button type="button" style={styles.btn} onClick={() => setListModalOpen(true)}>
-                    📋 Lista vaganja
-                </button>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button
-                        type="button"
-                        style={{ ...styles.btn, opacity: (isNewMode ? !tickets.length : activeTicketIndex <= 0) ? 0.5 : 1 }}
-                        onClick={goPrevTicket}
-                        disabled={isNewMode ? !tickets.length : activeTicketIndex <= 0}
-                    >
-                        ◀ Prethodno
-                    </button>
-                    <button type="button" style={styles.btnGreen} onClick={startNewTicket}>
-                        + Novo vaganje
-                    </button>
-                    <button
-                        type="button"
-                        style={{ ...styles.btn, opacity: (isNewMode || activeTicketIndex >= tickets.length - 1) ? 0.5 : 1 }}
-                        onClick={goNextTicket}
-                        disabled={isNewMode || activeTicketIndex >= tickets.length - 1}
-                    >
-                        Sljedeće ▶
-                    </button>
-                </div>
-            </div>
-
-            {gateInfo && <div style={{ padding: '10px 14px', background: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', fontSize: FS.body, borderRadius: '6px' }}>{gateInfo}</div>}
-            {gateError && <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #ef4444', color: '#991b1b', fontSize: FS.body, borderRadius: '6px' }}>{gateError}</div>}
-
-            {/* ---------- Glavni panel (vagarski list) ---------- */}
-            <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #334155', borderRadius: '10px', background: '#0f172a', color: '#e2e8f0' }}>
-                <div style={{
-                    display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '14px 18px', background: '#1e293b', borderBottom: '1px solid #334155', borderRadius: '10px 10px 0 0',
-                }}>
-                    <div style={{ display: 'flex', gap: '22px', flexWrap: 'wrap', fontSize: FS.body }}>
-                        <div>R.br: <b>{isNewMode ? 'NOVO' : (activeTicket?.code || '-')}</b></div>
-                        <div>Vagar: <b>{authUser?.name || '-'}</b></div>
-                        <div>Datum: <b>{now.toLocaleDateString()}</b></div>
-                        <div>Vrijeme: <b>{now.toLocaleTimeString()}</b></div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        {!isNewMode && activeTicket?.status && (
-                            <span style={{
-                                padding: '6px 14px', borderRadius: '999px', fontWeight: 700, fontSize: FS.small,
-                                background: isTicketClosed ? '#065f46' : isTicketVoidOrCancelled ? '#7f1d1d' : '#1e40af',
-                                color: '#fff',
-                            }}>
-                                {activeTicket.status}
-                            </span>
-                        )}
-                        <button
-                            type="button"
-                            disabled={!isNewMode}
-                            onClick={() => isNewMode && setNewTicketForm((p) => ({
-                                ...p,
-                                transactionType: p.transactionType === 'IN' ? 'OUT' : 'IN',
-                                contractId: '',
-                            }))}
-                            style={{
-                                padding: '10px 22px', borderRadius: '6px', fontWeight: 800, fontSize: '16px', border: 'none',
-                                cursor: isNewMode ? 'pointer' : 'default',
-                                background: displayType === 'OUT' ? '#b45309' : '#1d4ed8',
-                                color: '#fff',
-                                opacity: isNewMode ? 1 : 0.85,
-                            }}
-                            title={isNewMode ? 'Klikni za promjenu ULAZ/IZLAZ' : ''}
-                        >
-                            {displayType === 'OUT' ? 'IZLAZ' : 'ULAZ'}
-                        </button>
-                    </div>
-                </div>
-
-                <div style={{ padding: '18px', display: 'grid', gap: '18px' }}>
-
-                    {/* Vaga live */}
-                    <div style={{ background: '#000', border: '2px solid #334155', borderRadius: '8px', padding: '18px 20px' }}>
-                        <div style={{ color: scaleSignal.signalAvailable ? '#10b981' : '#f59e0b', fontSize: FS.small, marginBottom: '8px' }}>
-                            {scaleSignal.message}
+        <div className="ui-page gate-page">
+            <PageHeader
+                title={isNewMode ? 'Novo vaganje' : `Vaganje ${activeTicket?.code || ''}`}
+                subtitle={clockLabel || '\u00a0'}
+                actions={(
+                    <>
+                        <Button variant="secondary" icon={ListChecks} onClick={() => setListModalOpen(true)}>Lista vaganja</Button>
+                        <div className="row" style={{ gap: 4 }}>
+                            <Button
+                                variant="secondary"
+                                icon={ChevronLeft}
+                                onClick={goPrevTicket}
+                                disabled={isNewMode ? !tickets.length : activeTicketIndex <= 0}
+                                aria-label="Prethodno vaganje"
+                                title="Prethodno"
+                            />
+                            <Button
+                                variant="secondary"
+                                icon={ChevronRight}
+                                onClick={goNextTicket}
+                                disabled={isNewMode || activeTicketIndex >= tickets.length - 1}
+                                aria-label="Sljedeće vaganje"
+                                title="Sljedeće"
+                            />
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr auto', gap: '16px', alignItems: 'center' }}>
-                            <div className="scada-readout" style={{ color: '#10b981', fontSize: isMobile ? '38px' : FS.bigNumber, fontWeight: 800, lineHeight: 1 }}>
-                                {weightText}
+                        <Button variant="success" icon={Plus} onClick={startNewTicket}>Novo vaganje</Button>
+                    </>
+                )}
+            />
+
+            <Alert tone="success" onClose={() => setGateInfo('')}>{gateInfo}</Alert>
+            <Alert tone="danger" onClose={() => setGateError('')}>{gateError}</Alert>
+
+            <div className="gate-grid">
+                {/* ---------- Lijevo: vagarski list ---------- */}
+                <div className="stack" style={{ minWidth: 0 }}>
+                    <section className="ui-card">
+                        <div className="ui-card-header" style={{ flexWrap: 'wrap' }}>
+                            <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                                <span className="ui-stat-icon" style={{ width: 30, height: 30 }}><Scale size={16} /></span>
+                                <div>
+                                    <div className="ui-card-title">Vagarski list</div>
+                                    <div className="ui-card-subtitle">R.br: <b className="font-code">{isNewMode ? 'NOVO' : (activeTicket?.code || '-')}</b></div>
+                                </div>
+                                {!isNewMode && activeTicket?.status && <StatusBadge status={activeTicket.status} />}
                             </div>
-                            <div style={{ display: 'grid', gap: '8px', minWidth: isMobile ? 'auto' : '300px' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
-                                    <input
-                                        type="number"
-                                        value={liveWeight}
-                                        onChange={(event) => {
-                                            setManualWeightOverride(true);
-                                            setLiveWeight(Number(event.target.value || 0));
-                                        }}
-                                        style={{ padding: '10px', fontSize: FS.input, background: '#0b1220', color: '#e2e8f0', border: '1px solid #334155', borderRadius: '6px' }}
-                                    />
+                            {isNewMode ? (
+                                <div className="gate-type-toggle" role="radiogroup" aria-label="Vrsta vaganja">
+                                    {[
+                                        { value: 'IN', label: 'Ulaz', icon: ArrowDownToLine },
+                                        { value: 'OUT', label: 'Izlaz', icon: ArrowUpFromLine },
+                                    ].map((opt) => {
+                                        const Icon = opt.icon;
+                                        const checked = newTicketForm.transactionType === opt.value;
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                role="radio"
+                                                aria-checked={checked}
+                                                data-type={opt.value}
+                                                onClick={() => !checked && setNewTicketForm((p) => ({ ...p, transactionType: opt.value, contractId: '' }))}
+                                            >
+                                                <Icon size={16} /> {opt.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <Badge tone={displayType === 'OUT' ? 'orange' : 'info'}>
+                                    {displayType === 'OUT' ? <ArrowUpFromLine size={13} /> : <ArrowDownToLine size={13} />}
+                                    {displayType === 'OUT' ? 'IZLAZ' : 'ULAZ'}
+                                </Badge>
+                            )}
+                        </div>
+
+                        <div className="ui-card-body">
+                            <div className="ui-form-grid gate-form">
+                                <Field label="Artikl">
                                     <button
                                         type="button"
-                                        onClick={() => setManualWeightOverride((prev) => !prev)}
-                                        style={{
-                                            padding: '10px 14px', borderRadius: '6px', border: '1px solid #334155', fontSize: FS.small,
-                                            background: manualWeightOverride ? '#b45309' : '#1f2937', color: '#e2e8f0', cursor: 'pointer', whiteSpace: 'nowrap',
+                                        className="ui-input gate-picker-btn"
+                                        onClick={() => {
+                                            setMaterialPickerTarget(isNewMode ? 'newTicket' : 'ticketDetails');
+                                            setMaterialPickerOpen(true);
                                         }}
                                     >
-                                        {manualWeightOverride ? 'RUČNA KOREKCIJA' : 'SIGNAL'}
+                                        <Package size={16} />
+                                        <span className={currentMaterialLabel ? '' : 'muted'}>{currentMaterialLabel || 'Odaberi materijal'}</span>
                                     </button>
-                                </div>
-                                <div style={{ fontSize: FS.small, color: '#94a3b8' }}>
-                                    {manualWeightOverride ? 'Ručna korekcija je aktivna.' : 'Ručni unos je uvijek dostupan za korekcije.'}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                                </Field>
+                                <Field label="Komitent">
+                                    <div className="ui-input-group">
+                                        <input
+                                            className="ui-input lg"
+                                            list="gate-supplier-options"
+                                            value={isNewMode ? newSupplierQuery : detailSupplierQuery}
+                                            placeholder="- Nije odabrano -"
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                const resolved = resolveLookupId(value, supplierLookupOptions);
+                                                if (isNewMode) {
+                                                    setNewSupplierQuery(value);
+                                                    setNewTicketForm((prev) => ({ ...prev, supplierId: resolved || '' }));
+                                                } else {
+                                                    setDetailSupplierQuery(value);
+                                                    setTicketDraft((prev) => ({ ...prev, supplierId: resolved || '' }));
+                                                }
+                                            }}
+                                        />
+                                        <Button variant="secondary" size="lg" icon={Plus} onClick={() => openCreatePartnerModal(isNewMode ? 'newTicket' : 'ticketDetails')}>Novi</Button>
+                                    </div>
+                                </Field>
 
-                    {/* Osnovna polja */}
-                    <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr', gap: '16px' }}>
-                        <div>
-                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Artikl</label>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMaterialPickerTarget(isNewMode ? 'newTicket' : 'ticketDetails');
-                                    setMaterialPickerOpen(true);
-                                }}
-                                style={{ ...styles.input, textAlign: 'left', cursor: 'pointer' }}
-                            >
-                                {isNewMode
-                                    ? (selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal')
-                                    : (materials.find((m) => m.id === ticketDraft.materialId)
-                                        ? formatPickedMaterial(materials.find((m) => m.id === ticketDraft.materialId))
-                                        : 'Odaberi materijal')}
-                            </button>
-                        </div>
-                        <div>
-                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Komitent</label>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
-                                <input
-                                    list="gate-supplier-options"
-                                    value={isNewMode ? newSupplierQuery : detailSupplierQuery}
-                                    placeholder="- Nije odabrano -"
-                                    onChange={(e) => {
-                                        const value = e.target.value;
-                                        const resolved = resolveLookupId(value, supplierLookupOptions);
-                                        if (isNewMode) {
-                                            setNewSupplierQuery(value);
-                                            setNewTicketForm((prev) => ({ ...prev, supplierId: resolved || '' }));
-                                        } else {
-                                            setDetailSupplierQuery(value);
-                                            setTicketDraft((prev) => ({ ...prev, supplierId: resolved || '' }));
-                                        }
-                                    }}
-                                    style={styles.input}
-                                />
-                                <button type="button" style={styles.btn} onClick={() => openCreatePartnerModal(isNewMode ? 'newTicket' : 'ticketDetails')}>
-                                    + Novi
-                                </button>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Registarski broj</label>
-                            <input
-                                list="gate-known-plates"
-                                value={isNewMode ? newTicketForm.plate : ticketDraft.plate}
-                                onChange={(e) => isNewMode
-                                    ? setNewTicketForm((p) => ({ ...p, plate: e.target.value }))
-                                    : setTicketDraft((p) => ({ ...p, plate: e.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-                        <div>
-                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Vozač</label>
-                            <input
-                                list="gate-known-drivers"
-                                value={isNewMode ? newTicketForm.driver : ticketDraft.driver}
-                                onChange={(e) => isNewMode
-                                    ? setNewTicketForm((p) => ({ ...p, driver: e.target.value }))
-                                    : setTicketDraft((p) => ({ ...p, driver: e.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-
-                        {!isNewMode && (
-                            <div>
-                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Primio/Predao</label>
-                                <select
-                                    value={inspectionWorkerId}
-                                    onChange={(e) => setInspectionWorkerId(e.target.value)}
-                                    style={styles.input}
-                                >
-                                    {inspectionWorkers.length === 0 && <option value="">Nema definisanih kontrolora</option>}
-                                    {inspectionWorkers.map((worker) => (
-                                        <option key={worker.id} value={worker.id}>{worker.name} ({worker.code})</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                        {isNewMode && (
-                            <div>
-                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Najava (opciono)</label>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                                <Field label="Registarski broj">
                                     <input
-                                        list="gate-announcement-options"
-                                        value={selectedAnnouncementQuery}
-                                        placeholder="- Bez najave -"
-                                        onChange={(e) => {
-                                            const value = e.target.value;
-                                            setSelectedAnnouncementQuery(value);
-                                            setSelectedAnnouncementId(resolveLookupId(value, announcementLookupOptions) || '');
-                                        }}
-                                        style={styles.input}
+                                        className="ui-input lg font-code"
+                                        list="gate-known-plates"
+                                        value={isNewMode ? newTicketForm.plate : ticketDraft.plate}
+                                        onChange={(e) => isNewMode
+                                            ? setNewTicketForm((p) => ({ ...p, plate: e.target.value }))
+                                            : setTicketDraft((p) => ({ ...p, plate: e.target.value }))}
                                     />
-                                    <button type="button" style={styles.btn} onClick={openCreateAnnouncementModal}>+ Nova</button>
-                                </div>
-                            </div>
-                        )}
+                                </Field>
+                                <Field label="Vozač">
+                                    <input
+                                        className="ui-input lg"
+                                        list="gate-known-drivers"
+                                        value={isNewMode ? newTicketForm.driver : ticketDraft.driver}
+                                        onChange={(e) => isNewMode
+                                            ? setNewTicketForm((p) => ({ ...p, driver: e.target.value }))
+                                            : setTicketDraft((p) => ({ ...p, driver: e.target.value }))}
+                                    />
+                                </Field>
 
-                        {/* Narudžba */}
-                        <div>
-                            <label style={{ ...styles.label, color: '#cbd5e1' }}>
-                                Narudžba (opciono) — {isOutboundFlow ? 'prodaja' : 'nabavka'}
-                            </label>
-                            <select
-                                value={selectedContractId || ''}
-                                disabled={contractLocked}
-                                onChange={(e) => handleContractChange(e.target.value)}
-                                style={styles.input}
-                            >
-                                <option value="">- Bez narudžbe -</option>
-                                {contractOptions.map((c) => (
-                                    <option key={c.id} value={c.id}>{contractLabel(c)}</option>
-                                ))}
-                            </select>
+                                {!isNewMode && (
+                                    <Field label="Primio / predao">
+                                        <select
+                                            className="ui-input lg"
+                                            value={inspectionWorkerId}
+                                            onChange={(e) => setInspectionWorkerId(e.target.value)}
+                                        >
+                                            {inspectionWorkers.length === 0 && <option value="">Nema definisanih kontrolora</option>}
+                                            {inspectionWorkers.map((worker) => (
+                                                <option key={worker.id} value={worker.id}>{worker.name} ({worker.code})</option>
+                                            ))}
+                                        </select>
+                                    </Field>
+                                )}
+                                {isNewMode && (
+                                    <Field label="Najava (opciono)">
+                                        <div className="ui-input-group">
+                                            <input
+                                                className="ui-input lg"
+                                                list="gate-announcement-options"
+                                                value={selectedAnnouncementQuery}
+                                                placeholder="- Bez najave -"
+                                                onChange={(e) => {
+                                                    const value = e.target.value;
+                                                    setSelectedAnnouncementQuery(value);
+                                                    setSelectedAnnouncementId(resolveLookupId(value, announcementLookupOptions) || '');
+                                                }}
+                                            />
+                                            <Button variant="secondary" size="lg" icon={Plus} onClick={openCreateAnnouncementModal}>Nova</Button>
+                                        </div>
+                                    </Field>
+                                )}
+
+                                <Field label={`Narudžba (opciono) — ${isOutboundFlow ? 'prodaja' : 'nabavka'}`}>
+                                    <select
+                                        className="ui-input lg"
+                                        value={selectedContractId || ''}
+                                        disabled={contractLocked}
+                                        onChange={(e) => handleContractChange(e.target.value)}
+                                    >
+                                        <option value="">- Bez narudžbe -</option>
+                                        {contractOptions.map((c) => (
+                                            <option key={c.id} value={c.id}>{contractLabel(c)}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                {selectedContract && contractItems.length > 1 && (
+                                    <Field label="Materijal sa narudžbe">
+                                        <select
+                                            className="ui-input lg"
+                                            value={currentMaterialId || ''}
+                                            disabled={contractLocked}
+                                            onChange={(e) => handleContractMaterialChange(e.target.value)}
+                                        >
+                                            <option value="">- Odaberi -</option>
+                                            {contractItems.map((i) => {
+                                                const rem = i.qtyKg !== null && i.qtyKg !== undefined
+                                                    ? ` — preostalo ${fmtKg(Math.max(0, Number(i.qtyKg) - Number(i.doneKg || 0)))}`
+                                                    : '';
+                                                return <option key={i.id} value={i.materialId}>{i.material?.code} - {i.material?.name}{rem}</option>;
+                                            })}
+                                        </select>
+                                    </Field>
+                                )}
+                            </div>
                         </div>
-                        {selectedContract && contractItems.length > 1 && (
-                            <div>
-                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Materijal sa narudžbe</label>
-                                <select
-                                    value={currentMaterialId || ''}
-                                    disabled={contractLocked}
-                                    onChange={(e) => handleContractMaterialChange(e.target.value)}
-                                    style={styles.input}
-                                >
-                                    <option value="">- Odaberi -</option>
-                                    {contractItems.map((i) => {
-                                        const rem = i.qtyKg !== null && i.qtyKg !== undefined
-                                            ? ` — preostalo ${fmtKg(Math.max(0, Number(i.qtyKg) - Number(i.doneKg || 0)))} kg`
-                                            : '';
-                                        return <option key={i.id} value={i.materialId}>{i.material?.code} - {i.material?.name}{rem}</option>;
-                                    })}
-                                </select>
-                            </div>
-                        )}
-                    </div>
+                    </section>
 
-                    {selectedContract && (
-                        <ContractInfo
-                            contract={selectedContract}
-                            materialId={currentMaterialId}
-                            netKg={!isNewMode && !isTicketClosed && !isTicketVoidOrCancelled ? Number(activeTicket?.net || 0) : 0}
-                        />
-                    )}
-
-                    {/* Vaganje / neto */}
+                    {/* ---------- Koraci vaganja ---------- */}
                     {!isNewMode && activeTicket && (
-                        <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr 1fr', gap: '14px', alignItems: 'stretch' }}>
-                            <button
-                                type="button"
-                                onClick={handleFirstWeigh}
-                                disabled={firstStepDone || isTicketVoidOrCancelled}
-                                style={{
-                                    ...styles.btnPrimary, background: firstStepDone ? '#334155' : '#1d4ed8',
-                                    padding: '16px', fontSize: '16px', opacity: (firstStepDone || isTicketVoidOrCancelled) ? 0.75 : 1,
-                                    cursor: (firstStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
-                                }}
-                            >
-                                {isOutboundFlow ? 'Očitaj prazan' : 'Očitaj pun'}
-                                <div style={{ fontSize: FS.small, fontWeight: 500, marginTop: '4px' }}>
-                                    {isOutboundFlow ? Number(activeTicket?.tare || 0).toLocaleString() : Number(activeTicket?.gross || 0).toLocaleString()} kg
-                                </div>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleSecondWeigh}
-                                disabled={!firstStepDone || secondStepDone || isTicketVoidOrCancelled}
-                                style={{
-                                    ...styles.btnPrimary, background: secondStepDone ? '#334155' : '#15803d',
-                                    padding: '16px', fontSize: '16px', opacity: (!firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 0.75 : 1,
-                                    cursor: (!firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
-                                }}
-                            >
-                                {isOutboundFlow ? 'Očitaj pun' : 'Očitaj prazan'}
-                                <div style={{ fontSize: FS.small, fontWeight: 500, marginTop: '4px' }}>
-                                    {isOutboundFlow ? Number(activeTicket?.gross || 0).toLocaleString() : Number(activeTicket?.tare || 0).toLocaleString()} kg
-                                </div>
-                            </button>
-                            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '6px', padding: '14px', textAlign: 'center' }}>
-                                <div style={{ fontSize: FS.small, color: '#94a3b8' }}>NETO</div>
-                                <div style={{ fontSize: FS.neto, fontWeight: 800, color: '#10b981' }}>
-                                    {Number(activeTicket?.net || 0).toLocaleString()} <span style={{ fontSize: '16px' }}>kg</span>
+                        <section className="ui-card">
+                            <div className="ui-card-header">
+                                <div>
+                                    <div className="ui-card-title">Mjerenje</div>
+                                    <div className="ui-card-subtitle">
+                                        {isOutboundFlow ? 'Izlaz: prvo prazno vozilo, zatim puno' : 'Ulaz: prvo puno vozilo, zatim prazno'}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+                            <div className="ui-card-body">
+                                <div className="gate-steps">
+                                    <WeighStep
+                                        index={1}
+                                        title={stepOneTitle}
+                                        valueKg={stepOneKg}
+                                        done={firstStepDone}
+                                        disabled={isTicketVoidOrCancelled}
+                                        onClick={handleFirstWeigh}
+                                        hint="Klikni za očitavanje vage"
+                                    />
+                                    <WeighStep
+                                        index={2}
+                                        title={stepTwoTitle}
+                                        valueKg={stepTwoKg}
+                                        done={secondStepDone}
+                                        disabled={!firstStepDone || isTicketVoidOrCancelled}
+                                        onClick={handleSecondWeigh}
+                                        hint={firstStepDone ? 'Klikni za očitavanje vage' : 'Čeka 1. mjerenje'}
+                                    />
+                                    <div className="gate-net">
+                                        <span className="gate-net-label">Neto</span>
+                                        <span className="gate-net-value">{fmtNum(activeTicket?.net)} <small>kg</small></span>
+                                        {Number(totalPackagingKg || 0) > 0 && (
+                                            <span className="gate-net-hint">odbitak ambalaže {fmtKg(totalPackagingKg)}</span>
+                                        )}
+                                    </div>
+                                </div>
+                                {isTareFallback && (
+                                    <Alert tone="warning" style={{ marginTop: 14 }}>
+                                        Live signal nije dostupan — korišten je zadnji poznati tara podatak sa vaganja.
+                                    </Alert>
+                                )}
+                            </div>
+                        </section>
                     )}
 
-                    {isTareFallback && !isNewMode && (
-                        <div style={{ padding: '10px', background: '#78350f', color: '#fde68a', fontSize: FS.small, borderRadius: '6px' }}>
-                            Live signal nije dostupan — korišten je zadnji poznati tara podatak sa vaganja.
-                        </div>
-                    )}
-
-                    {/* Ambalaža / napomena - collapsible */}
+                    {/* ---------- Ambalaža / korekcije ---------- */}
                     {!isNewMode && (
-                        <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}>
+                        <section className="ui-card">
                             <button
                                 type="button"
+                                className="gate-collapse"
                                 onClick={() => setPackagingOpen((v) => !v)}
-                                style={{
-                                    width: '100%', textAlign: 'left', padding: '12px 16px', background: 'transparent', border: 'none',
-                                    color: '#e2e8f0', fontWeight: 700, fontSize: FS.body, cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
-                                }}
+                                aria-expanded={packagingOpen}
                             >
-                                <span>Ambalaža / napomena {totalPackagingKg > 0 ? `(odbitak: ${Number(totalPackagingKg).toLocaleString()} kg)` : ''}</span>
-                                <span>{packagingOpen ? '▲' : '▼'}</span>
+                                <span>
+                                    <span className="ui-card-title">Ambalaža, cijena i korekcije</span>
+                                    <span className="ui-card-subtitle" style={{ display: 'block' }}>
+                                        {totalPackagingKg > 0 ? `Odbitak ambalaže: ${fmtKg(totalPackagingKg)}` : 'Bez odbitka ambalaže'}
+                                    </span>
+                                </span>
+                                <ChevronDown size={18} style={{ transform: packagingOpen ? 'rotate(180deg)' : 'none', transition: 'transform .18s' }} />
                             </button>
                             {packagingOpen && (
-                                <div style={{ padding: '0 16px 16px' }}>
-                                    <div style={{ display: 'grid', gap: '8px' }}>
+                                <div className="ui-card-body" style={{ borderTop: '1px solid var(--border)' }}>
+                                    <div className="stack" style={{ gap: 8 }}>
                                         {packagingRows.map((row) => (
-                                            <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: '8px' }}>
+                                            <div key={row.id} className="gate-pkg-row">
                                                 <input
+                                                    className="ui-input"
                                                     placeholder="Vrsta ambalaže"
                                                     value={row.type}
                                                     onChange={(e) => updatePackagingRow(row.id, 'type', e.target.value)}
-                                                    style={styles.input}
                                                 />
                                                 <input
                                                     type="number"
-                                                    placeholder="KG"
+                                                    className="ui-input font-mono"
+                                                    placeholder="kg"
                                                     value={row.kg}
                                                     onChange={(e) => updatePackagingRow(row.id, 'kg', e.target.value)}
-                                                    style={{ ...styles.input, textAlign: 'right' }}
+                                                    style={{ textAlign: 'right' }}
                                                 />
-                                                <button type="button" style={styles.btn} onClick={() => removePackagingRow(row.id)}>Ukloni</button>
+                                                <Button variant="ghost" icon={Trash2} aria-label="Ukloni ambalažu" onClick={() => removePackagingRow(row.id)} />
                                             </div>
                                         ))}
                                     </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
-                                        <button type="button" style={styles.btn} onClick={addPackagingRow}>+ Ambalaža</button>
-                                        <div style={{ fontSize: FS.body, fontWeight: 700 }}>Ukupno odbitak: {Number(totalPackagingKg || 0).toLocaleString()} KG</div>
+                                    <div className="row-between" style={{ marginTop: 10 }}>
+                                        <Button variant="soft" size="sm" icon={Plus} onClick={addPackagingRow}>Ambalaža</Button>
+                                        <b>Ukupno odbitak: {fmtKg(totalPackagingKg)}</b>
                                     </div>
-                                    <div style={{ marginTop: '10px' }}>
-                                        <label style={{ ...styles.label, color: '#cbd5e1' }}>Cijena/KG</label>
-                                        <input
-                                            type="number"
-                                            value={ticketDraft.pricePerKg}
-                                            onChange={(e) => setTicketDraft((p) => ({ ...p, pricePerKg: e.target.value }))}
-                                            style={{ ...styles.input, maxWidth: '200px' }}
-                                        />
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' }}>
-                                        <div>
-                                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Bruto (korekcija)</label>
-                                            <input type="number" value={ticketDraft.gross} onChange={(e) => setTicketDraft((p) => ({ ...p, gross: e.target.value }))} style={styles.input} />
-                                        </div>
-                                        <div>
-                                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Tara (korekcija)</label>
-                                            <input type="number" value={ticketDraft.tare} onChange={(e) => setTicketDraft((p) => ({ ...p, tare: e.target.value }))} style={styles.input} />
-                                        </div>
+                                    <div className="ui-form-grid" style={{ marginTop: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                                        <Field label="Cijena / kg">
+                                            <input
+                                                type="number"
+                                                className="ui-input font-mono"
+                                                value={ticketDraft.pricePerKg}
+                                                onChange={(e) => setTicketDraft((p) => ({ ...p, pricePerKg: e.target.value }))}
+                                            />
+                                        </Field>
+                                        <Field label="Bruto (korekcija)">
+                                            <input type="number" className="ui-input font-mono" value={ticketDraft.gross} onChange={(e) => setTicketDraft((p) => ({ ...p, gross: e.target.value }))} />
+                                        </Field>
+                                        <Field label="Tara (korekcija)">
+                                            <input type="number" className="ui-input font-mono" value={ticketDraft.tare} onChange={(e) => setTicketDraft((p) => ({ ...p, tare: e.target.value }))} />
+                                        </Field>
                                     </div>
                                 </div>
                             )}
-                        </div>
+                        </section>
                     )}
 
-                    {/* Akcije dole */}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'flex-end', borderTop: '1px solid #334155', paddingTop: '16px' }}>
+                    {/* ---------- Akcije ---------- */}
+                    <div className="gate-actions">
                         {isNewMode ? (
-                            <button type="button" style={styles.btnGreen} onClick={handleCreateTicket}>
-                                ✓ Kreiraj vaganje
-                            </button>
+                            <Button variant="success" size="xl" icon={Check} onClick={handleCreateTicket}>Kreiraj vaganje</Button>
                         ) : (
                             <>
                                 {canGateCancel && (
-                                    <button type="button" style={styles.btnAmber} onClick={handleGateCancelTicket}>Otkaži vaganje</button>
+                                    <Button variant="warning" size="lg" icon={Ban} onClick={handleGateCancelTicket}>Otkaži vaganje</Button>
                                 )}
                                 {canGateVoid && (
-                                    <button type="button" style={styles.btnDanger} onClick={handleGateVoidTicket}>Storno (knjiženje)</button>
+                                    <Button variant="danger-soft" size="lg" icon={RotateCcw} onClick={handleGateVoidTicket}>Storno (knjiženje)</Button>
                                 )}
-                                <button
-                                    type="button"
-                                    style={{ ...styles.btn, background: '#334155', color: '#e2e8f0', borderColor: '#475569' }}
+                                <Button
+                                    variant="secondary"
+                                    size="lg"
+                                    icon={Save}
                                     disabled={isTicketClosed || isTicketVoidOrCancelled}
                                     onClick={handleSaveTicketDetails}
                                 >
-                                    OK — Sačuvaj
-                                </button>
-                                <button
-                                    type="button"
-                                    style={{ ...styles.btnGreen, opacity: (!secondStepDone || isTicketVoidOrCancelled || closeSubmitting) ? 0.6 : 1 }}
+                                    Sačuvaj izmjene
+                                </Button>
+                                <Button
+                                    variant="success"
+                                    size="xl"
+                                    icon={Printer}
                                     disabled={!secondStepDone || isTicketVoidOrCancelled || closeSubmitting}
                                     onClick={handleOpenComplete}
                                 >
-                                    🖨️ Zatvori & Vagarski list
-                                </button>
+                                    Zatvori i vagarski list
+                                </Button>
                             </>
                         )}
                     </div>
+                </div>
+
+                {/* ---------- Desno: vaga + narudžba ---------- */}
+                <div className="stack gate-side">
+                    <section className="ui-card gate-scale" data-tone={signalTone}>
+                        <div className="row-between" style={{ padding: '14px 18px 0' }}>
+                            <span className="ui-card-title">Vaga</span>
+                            <Badge tone={signalTone} dot>{scaleSignal.message}</Badge>
+                        </div>
+                        <div className="gate-scale-readout" aria-live="polite">{weightText}</div>
+                        <div style={{ padding: '0 18px 18px' }}>
+                            <div className="ui-input-group">
+                                <input
+                                    type="number"
+                                    className="ui-input lg font-mono"
+                                    value={liveWeight}
+                                    aria-label="Težina (ručni unos)"
+                                    onChange={(event) => {
+                                        setManualWeightOverride(true);
+                                        setLiveWeight(Number(event.target.value || 0));
+                                    }}
+                                />
+                                <Button
+                                    variant={manualWeightOverride ? 'warning' : 'secondary'}
+                                    size="lg"
+                                    icon={manualWeightOverride ? Pencil : Wifi}
+                                    onClick={() => setManualWeightOverride((prev) => !prev)}
+                                >
+                                    {manualWeightOverride ? 'Ručno' : 'Signal'}
+                                </Button>
+                            </div>
+                            <div className="ui-hint" style={{ marginTop: 6 }}>
+                                {manualWeightOverride ? 'Ručna korekcija je aktivna — klikni „Ručno” za povratak na signal.' : 'Ručni unos je uvijek dostupan za korekcije.'}
+                            </div>
+                        </div>
+                    </section>
+
+                    {selectedContract ? (
+                        <ContractInfo
+                            contract={selectedContract}
+                            materialId={currentMaterialId}
+                            netKg={pendingNetForOrder}
+                        />
+                    ) : (
+                        <section className="ui-card gate-no-order">
+                            <EmptyState
+                                icon={ClipboardList}
+                                title="Bez narudžbe"
+                                text={`Odaberi narudžbu (${isOutboundFlow ? 'prodaja' : 'nabavka'}) da pratiš koliko je ostalo ${isOutboundFlow ? 'za isporuku' : 'za prijem'}.`}
+                            />
+                        </section>
+                    )}
                 </div>
             </div>
 
@@ -1517,104 +1572,103 @@ export default function GatePage() {
             </datalist>
 
             {/* ---------- Modal: lista vaganja ---------- */}
-            <Modal open={listModalOpen} onClose={() => setListModalOpen(false)} title="Lista vaganja" width={720}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '12px', fontSize: FS.small, fontWeight: 700 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        Od
-                        <input type="date" value={listDateFrom} onChange={(e) => setListDateFrom(e.target.value)} style={{ padding: '6px 8px', fontSize: FS.small }} />
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        Do
-                        <input type="date" value={listDateTo} onChange={(e) => setListDateTo(e.target.value)} style={{ padding: '6px 8px', fontSize: FS.small }} />
-                    </label>
-                    <button type="button" style={styles.btn} onClick={() => { const t = localYmd(); setListDateFrom(t); setListDateTo(t); }}>
+            <Modal open={listModalOpen} onClose={() => setListModalOpen(false)} title="Lista vaganja" subtitle={`${tickets.length} vaganja u periodu`} width={780}>
+                <div className="ui-toolbar" style={{ marginBottom: 12 }}>
+                    <Field label="Od">
+                        <input type="date" className="ui-input" value={listDateFrom} onChange={(e) => setListDateFrom(e.target.value)} />
+                    </Field>
+                    <Field label="Do">
+                        <input type="date" className="ui-input" value={listDateTo} onChange={(e) => setListDateTo(e.target.value)} />
+                    </Field>
+                    <Button variant="secondary" style={{ alignSelf: 'flex-end' }} onClick={() => { const t = localYmd(); setListDateFrom(t); setListDateTo(t); }}>
                         Danas
-                    </button>
+                    </Button>
                 </div>
-                <div style={{ maxHeight: '55vh', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                <div className="gate-list">
                     {tickets.map((ticket) => {
-                        const st = String(ticket.status || '').toLowerCase();
-                        const rowBg = selectedTicketId === ticket.id
-                            ? '#dcfce7'
-                            : st === 'zatvoren' ? '#ecfdf5'
-                                : (st === 'otkazan' || st === 'storniran') ? '#fef2f2' : '#fff';
                         const orderCode = contracts.find((c) => c.id === ticket.contractId)?.code;
+                        const selected = selectedTicketId === ticket.id;
                         return (
-                            <div
+                            <button
+                                type="button"
                                 key={ticket.id}
+                                className="gate-list-row"
+                                data-selected={selected}
                                 onClick={() => { goToTicket(ticket.id); setListModalOpen(false); }}
-                                style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', background: rowBg, fontSize: FS.body }}
                             >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-                                    <span>{ticket.code || ticket.id}</span>
-                                    <span style={{ fontSize: FS.small, color: '#64748b' }}>{ticket.type} · {ticket.status || '-'}</span>
-                                </div>
-                                <div style={{ fontSize: FS.small, marginTop: '3px' }}>
-                                    {ticket.supplier?.name || '-'} | {ticket.driver || '-'} | {ticket.plate || '-'}
-                                    {orderCode ? ` | Narudžba: ${orderCode}` : ''}
-                                </div>
-                                <div style={{ fontSize: FS.small, color: '#64748b', marginTop: '2px', fontWeight: 700 }}>
-                                    {ticket.material?.code || '-'} - {ticket.material?.name || '-'}
-                                </div>
-                                <div className="font-mono font-bold" style={{ fontSize: FS.small, marginTop: '4px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px' }}>
-                                    <span>TARA: {Number(ticket.tare || 0).toLocaleString()}</span>
-                                    <span>BRUTO: {Number(ticket.gross || 0).toLocaleString()}</span>
-                                    <span>NETO: {Number(ticket.net || 0).toLocaleString()}</span>
-                                </div>
-                            </div>
+                                <span className="gate-list-main">
+                                    <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                        <b className="font-code">{ticket.code || ticket.id}</b>
+                                        <Badge tone={ticket.type === 'OUT' ? 'orange' : 'info'}>{ticket.type === 'OUT' ? 'Izlaz' : 'Ulaz'}</Badge>
+                                        <StatusBadge status={ticket.status} />
+                                    </span>
+                                    <span className="gate-list-meta">
+                                        {ticket.supplier?.name || '-'} · {ticket.driver || '-'} · {ticket.plate || '-'}
+                                        {orderCode ? ` · Narudžba: ${orderCode}` : ''}
+                                    </span>
+                                    <span className="gate-list-meta">{ticket.material?.code || '-'} · {ticket.material?.name || '-'}</span>
+                                </span>
+                                <span className="gate-list-weights">
+                                    <span>Tara <b>{fmtNum(ticket.tare)}</b></span>
+                                    <span>Bruto <b>{fmtNum(ticket.gross)}</b></span>
+                                    <span className="gate-list-net">Neto <b>{fmtNum(ticket.net)} kg</b></span>
+                                </span>
+                            </button>
                         );
                     })}
-                    {!tickets.length && <div style={{ padding: '18px', color: '#64748b', fontSize: FS.body }}>Nema vaganja u izabranom periodu.</div>}
+                    {!tickets.length && <EmptyState title="Nema vaganja u izabranom periodu" />}
                 </div>
             </Modal>
 
             {/* ---------- Modal: zatvori vaganje ---------- */}
-            <Modal open={completeOpen} onClose={() => setCompleteOpen(false)} title="Zatvori vaganje" width={560}>
-                <div style={{ display: 'grid', gap: '14px', fontSize: FS.body }}>
-                    {activeTicket?.contractId && (
-                        <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: '6px', fontSize: FS.small }}>
-                            Narudžba: <b>{contracts.find((c) => c.id === activeTicket.contractId)?.code || '-'}</b> — količina će biti
-                            {activeTicket.type === 'OUT' ? ' skinuta sa isporuke' : ' evidentirana kao primljena'}.
-                        </div>
-                    )}
-                    <div>
-                        <label style={styles.label}>Vozač za štampu (opciono)</label>
-                        <input list="gate-known-drivers" value={closeDriverName} onChange={(e) => setCloseDriverName(e.target.value)} style={styles.input} />
+            <Modal open={completeOpen} onClose={() => setCompleteOpen(false)} title="Zatvori vaganje" subtitle={activeTicket?.code} width={560}>
+                <div className="stack" style={{ gap: 14 }}>
+                    <div className="gate-close-summary">
+                        <div><span className="muted">Komitent</span><b>{activeTicket?.supplier?.name || '-'}</b></div>
+                        <div><span className="muted">Materijal</span><b>{activeTicket?.material?.code || '-'} · {activeTicket?.material?.name || ''}</b></div>
+                        <div><span className="muted">Neto</span><b className="gate-close-net">{fmtKg(activeTicket?.net)}</b></div>
                     </div>
+                    {activeTicket?.contractId && (
+                        <Alert tone="info">
+                            Narudžba <b>{contracts.find((c) => c.id === activeTicket.contractId)?.code || '-'}</b> — količina će biti
+                            {activeTicket.type === 'OUT' ? ' skinuta sa isporuke' : ' evidentirana kao primljena'}.
+                        </Alert>
+                    )}
+                    <Field label="Vozač za štampu (opciono)">
+                        <input className="ui-input" list="gate-known-drivers" value={closeDriverName} onChange={(e) => setCloseDriverName(e.target.value)} />
+                    </Field>
                     {activeTicket?.type !== 'OUT' && (
-                        <div>
-                            <label style={styles.label}>LOT dodjela (skladište)</label>
-                            <select value={closeLocation} onChange={(e) => setCloseLocation(e.target.value)} style={styles.input}>
+                        <Field label="LOT dodjela (skladište)">
+                            <select className="ui-input" value={closeLocation} onChange={(e) => setCloseLocation(e.target.value)}>
                                 <option>Otvoreni lager C</option>
                                 <option>Hala 1 - Sektor A</option>
                                 <option>Hala 2 - Sektor D</option>
                             </select>
-                        </div>
+                        </Field>
                     )}
                     {activeTicket?.type === 'OUT' && (
-                        <div>
-                            <label style={styles.label}>Materijal za sljedeće OUT vaganje</label>
-                            <select value={nextOutboundMaterialId} onChange={(e) => setNextOutboundMaterialId(e.target.value)} style={styles.input}>
+                        <Field label="Materijal za sljedeće OUT vaganje">
+                            <select className="ui-input" value={nextOutboundMaterialId} onChange={(e) => setNextOutboundMaterialId(e.target.value)}>
                                 <option value="">- Materijal -</option>
                                 {materials.map((m) => <option key={m.id} value={m.id}>{m.code} - {m.name}</option>)}
                             </select>
-                        </div>
+                        </Field>
                     )}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
                         <input type="checkbox" checked={printWeighSlip} onChange={(e) => setPrintWeighSlip(e.target.checked)} />
                         Štampaj vagarski list
                     </label>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }}>
-                    <button type="button" style={styles.btn} onClick={() => setCompleteOpen(false)}>Odustani</button>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCompleteOpen(false)}>Odustani</Button>
                     {activeTicket?.type === 'OUT' && (
-                        <button type="button" style={{ ...styles.btnPrimary, opacity: closeSubmitting ? 0.7 : 1 }} disabled={closeSubmitting} onClick={() => handleCloseTicket({ continueOutbound: true })}>
-                            {closeSubmitting ? 'Obrada...' : 'Zatvori & novo vaganje'}
-                        </button>
+                        <Button variant="soft" disabled={closeSubmitting} onClick={() => handleCloseTicket({ continueOutbound: true })}>
+                            {closeSubmitting ? 'Obrada...' : 'Zatvori i novo vaganje'}
+                        </Button>
                     )}
-                    <button type="button" style={{ ...styles.btnGreen, opacity: closeSubmitting ? 0.7 : 1 }} disabled={closeSubmitting} onClick={() => handleCloseTicket()}>
-                        {closeSubmitting ? 'Obrada...' : 'Zatvori & štampaj'}
-                    </button>
+                    <Button variant="success" icon={Printer} disabled={closeSubmitting} onClick={() => handleCloseTicket()}>
+                        {closeSubmitting ? 'Obrada...' : 'Zatvori i štampaj'}
+                    </Button>
                 </div>
             </Modal>
 
@@ -1632,18 +1686,17 @@ export default function GatePage() {
                 onMaterialCreated={() => refreshMaterials().catch(() => null)}
             />
 
-            <Modal open={createAnnouncementOpen} onClose={() => setCreateAnnouncementOpen(false)} title="Nova najava / narudžba" width={560}>
-                <div style={{ display: 'grid', gap: '12px', fontSize: FS.body }}>
-                    <div>
-                        <label style={styles.label}>Materijal</label>
-                        <div style={{ ...styles.input, background: '#f8fafc' }}>
-                            {selectedMaterial ? formatPickedMaterial(selectedMaterial) : '-'}
+            <Modal open={createAnnouncementOpen} onClose={() => setCreateAnnouncementOpen(false)} title="Nova najava prijema" width={560}>
+                <div className="ui-form-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <Field label="Materijal" span="all">
+                        <div className="ui-input" style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-2)' }}>
+                            {selectedMaterial ? formatPickedMaterial(selectedMaterial) : <span className="muted">Materijal nije odabran</span>}
                         </div>
-                    </div>
-                    <div>
-                        <label style={styles.label}>Komitent *</label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                    </Field>
+                    <Field label="Komitent" required span="all">
+                        <div className="ui-input-group">
                             <input
+                                className="ui-input"
                                 list="gate-supplier-options"
                                 value={newAnnouncementSupplierQuery}
                                 placeholder="Odaberi ili upiši komitenta"
@@ -1653,94 +1706,191 @@ export default function GatePage() {
                                     const resolved = resolveLookupId(value, supplierLookupOptions);
                                     setNewAnnouncementForm((prev) => ({ ...prev, supplierId: resolved || '' }));
                                 }}
-                                style={styles.input}
                             />
-                            <button type="button" style={styles.btn} onClick={() => openCreatePartnerModal('newAnnouncement')}>+ Novi</button>
+                            <Button variant="secondary" icon={Plus} onClick={() => openCreatePartnerModal('newAnnouncement')}>Novi</Button>
                         </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
-                            <label style={styles.label}>Planirano KG *</label>
-                            <input
-                                type="number" min="0" step="0.01"
-                                value={newAnnouncementForm.expectedKg}
-                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedKg: event.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-                        <div>
-                            <label style={styles.label}>Tablice (opciono)</label>
-                            <input
-                                list="gate-known-plates"
-                                value={newAnnouncementForm.truck}
-                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, truck: event.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
-                            <label style={styles.label}>Datum najave</label>
-                            <input
-                                type="date"
-                                value={newAnnouncementForm.expectedDate}
-                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedDate: event.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-                        <div>
-                            <label style={styles.label}>Status</label>
-                            <input
-                                type="text"
-                                value={newAnnouncementForm.status}
-                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, status: event.target.value }))}
-                                style={styles.input}
-                            />
-                        </div>
-                    </div>
+                    </Field>
+                    <Field label="Planirano (kg)" required>
+                        <input
+                            type="number" min="0" step="0.01"
+                            className="ui-input font-mono"
+                            value={newAnnouncementForm.expectedKg}
+                            onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedKg: event.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Tablice (opciono)">
+                        <input
+                            className="ui-input font-code"
+                            list="gate-known-plates"
+                            value={newAnnouncementForm.truck}
+                            onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, truck: event.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Datum najave">
+                        <input
+                            type="date"
+                            className="ui-input"
+                            value={newAnnouncementForm.expectedDate}
+                            onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedDate: event.target.value }))}
+                        />
+                    </Field>
+                    <Field label="Status">
+                        <input
+                            type="text"
+                            className="ui-input"
+                            value={newAnnouncementForm.status}
+                            onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, status: event.target.value }))}
+                        />
+                    </Field>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' }}>
-                    <button type="button" style={styles.btn} onClick={() => setCreateAnnouncementOpen(false)}>Odustani</button>
-                    <button type="button" style={styles.btnPrimary} onClick={handleCreateAnnouncement}>Sačuvaj najavu</button>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreateAnnouncementOpen(false)}>Odustani</Button>
+                    <Button onClick={handleCreateAnnouncement}>Sačuvaj najavu</Button>
                 </div>
             </Modal>
 
-            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title="Novi komitent / partner" width={520}>
-                <div style={{ display: 'grid', gap: '12px', fontSize: FS.body }}>
-                    <div>
-                        <label style={styles.label}>Naziv komitenta *</label>
-                        <input type="text" style={styles.input} value={newPartnerForm.name} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, name: event.target.value }))} />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
-                            <label style={styles.label}>Grad</label>
-                            <input type="text" style={styles.input} value={newPartnerForm.city} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, city: event.target.value }))} />
-                        </div>
-                        <div>
-                            <label style={styles.label}>JIB</label>
-                            <input type="text" style={styles.input} value={newPartnerForm.jib} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, jib: event.target.value }))} />
-                        </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
-                            <label style={styles.label}>Telefon</label>
-                            <input type="text" style={styles.input} value={newPartnerForm.phone} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, phone: event.target.value }))} />
-                        </div>
-                        <div>
-                            <label style={styles.label}>Email</label>
-                            <input type="email" style={styles.input} value={newPartnerForm.email} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, email: event.target.value }))} />
-                        </div>
-                    </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title="Novi komitent / partner" width={560}>
+                <div className="ui-form-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <Field label="Naziv komitenta" required span="all">
+                        <input type="text" className="ui-input" value={newPartnerForm.name} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, name: event.target.value }))} autoFocus />
+                    </Field>
+                    <Field label="Grad">
+                        <input type="text" className="ui-input" value={newPartnerForm.city} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, city: event.target.value }))} />
+                    </Field>
+                    <Field label="JIB">
+                        <input type="text" className="ui-input" value={newPartnerForm.jib} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, jib: event.target.value }))} />
+                    </Field>
+                    <Field label="Telefon">
+                        <input type="text" className="ui-input" value={newPartnerForm.phone} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, phone: event.target.value }))} />
+                    </Field>
+                    <Field label="Email">
+                        <input type="email" className="ui-input" value={newPartnerForm.email} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, email: event.target.value }))} />
+                    </Field>
+                    <label className="row span-all" style={{ gap: 8, cursor: 'pointer' }}>
                         <input type="checkbox" checked={newPartnerForm.createCustomerMirror} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, createCustomerMirror: event.target.checked }))} />
                         Kreiraj i kao kupca (isti partner za ulaz i izlaz)
                     </label>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
-                    <button type="button" style={styles.btn} onClick={() => setCreatePartnerOpen(false)}>Odustani</button>
-                    <button type="button" style={styles.btnPrimary} onClick={handleCreatePartner}>Sačuvaj komitenta</button>
+                <div className="ui-modal-footer">
+                    <Button variant="secondary" onClick={() => setCreatePartnerOpen(false)}>Odustani</Button>
+                    <Button onClick={handleCreatePartner}>Sačuvaj komitenta</Button>
                 </div>
             </Modal>
+
+            <style>{`
+                .gate-grid {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+                    gap: 16px;
+                    align-items: start;
+                }
+                .gate-side { position: sticky; top: 0; }
+                .gate-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                .gate-picker-btn {
+                    height: 46px; display: flex; align-items: center; gap: 8px; text-align: left;
+                    font-size: 15px; cursor: pointer; overflow: hidden; white-space: nowrap;
+                }
+                .gate-picker-btn svg { color: var(--primary); flex-shrink: 0; }
+                .gate-picker-btn span { overflow: hidden; text-overflow: ellipsis; }
+                .gate-type-toggle {
+                    display: inline-flex; padding: 3px; gap: 3px; border-radius: 12px; background: var(--surface-3);
+                }
+                .gate-type-toggle button {
+                    display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 18px;
+                    border: none; border-radius: 9px; background: transparent; font-weight: 700; font-size: 14px; color: var(--text-2);
+                }
+                .gate-type-toggle button[aria-checked='true'][data-type='IN'] { background: var(--primary); color: #fff; box-shadow: var(--shadow-sm); }
+                .gate-type-toggle button[aria-checked='true'][data-type='OUT'] { background: #e8743b; color: #fff; box-shadow: var(--shadow-sm); }
+                .gate-type-toggle button:hover:not(:disabled)[aria-checked='false'] { background: rgba(255,255,255,.7); }
+
+                .gate-scale-readout {
+                    padding: 18px 18px 14px;
+                    font-size: 56px; font-weight: 700; letter-spacing: -0.03em; line-height: 1;
+                    font-variant-numeric: tabular-nums; color: var(--text);
+                    text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                }
+                .gate-scale { border-top: 3px solid var(--success); }
+                .gate-scale[data-tone='warning'] { border-top-color: var(--warning); }
+
+                .gate-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+                .gate-step {
+                    display: flex; align-items: flex-start; gap: 12px; text-align: left; padding: 16px;
+                    border-radius: var(--radius-lg); border: 1px solid var(--primary-200); background: var(--primary-50);
+                    min-height: 108px;
+                }
+                .gate-step:hover:not(:disabled) { background: var(--primary-100); border-color: var(--primary); }
+                .gate-step:disabled { opacity: 1; }
+                .gate-step[data-state='done'] { background: var(--success-50); border-color: #bfe9da; cursor: default; }
+                .gate-step[data-state='locked'] { background: var(--surface-2); border-color: var(--border); }
+                .gate-step-num {
+                    width: 30px; height: 30px; border-radius: 999px; flex-shrink: 0; display: grid; place-items: center;
+                    background: var(--primary); color: #fff; font-weight: 700; font-size: 14px;
+                }
+                .gate-step[data-state='done'] .gate-step-num { background: var(--success); }
+                .gate-step[data-state='locked'] .gate-step-num { background: var(--border-strong); }
+                .gate-step-body { display: grid; gap: 2px; min-width: 0; }
+                .gate-step-title { font-weight: 600; font-size: 13px; color: var(--text-2); }
+                .gate-step-value { font-size: 24px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+                .gate-step-value small, .gate-net-value small { font-size: 13px; font-weight: 500; color: var(--text-3); }
+                .gate-step-hint { font-size: 11.5px; color: var(--text-3); }
+                .gate-step[data-state='ready'] .gate-step-hint { color: var(--primary-ink); }
+                .gate-net {
+                    display: grid; align-content: center; gap: 2px; padding: 16px; border-radius: var(--radius-lg);
+                    background: var(--surface); border: 2px solid var(--success); text-align: right;
+                }
+                .gate-net-label { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--success-ink); }
+                .gate-net-value { font-size: 32px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+                .gate-net-hint { font-size: 11.5px; color: var(--text-3); }
+
+                .gate-collapse {
+                    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                    padding: 14px 18px; border: none; background: transparent; text-align: left; border-radius: var(--radius-lg);
+                }
+                .gate-collapse:hover:not(:disabled) { background: var(--surface-2); }
+                .gate-pkg-row { display: grid; grid-template-columns: minmax(0, 1fr) 140px auto; gap: 8px; }
+                .gate-actions {
+                    display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; align-items: center;
+                    padding: 14px; border-radius: var(--radius-lg); background: var(--surface); border: 1px solid var(--border);
+                }
+
+                .gate-order-line { padding: 10px 12px; border-radius: var(--radius); margin: 0 -12px; }
+                .gate-order-line.is-active { background: var(--primary-50); }
+
+                .gate-list { max-height: 58vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+                .gate-list-row {
+                    width: 100%; display: flex; gap: 12px; justify-content: space-between; align-items: center; text-align: left;
+                    padding: 12px 14px; border: none; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--surface);
+                }
+                .gate-list-row:last-child { border-bottom: none; }
+                .gate-list-row:hover:not(:disabled) { background: var(--surface-hover); }
+                .gate-list-row[data-selected='true'] { background: var(--primary-50); box-shadow: inset 3px 0 0 var(--primary); }
+                .gate-list-main { display: grid; gap: 4px; min-width: 0; }
+                .gate-list-meta { font-size: 12px; color: var(--text-3); }
+                .gate-list-weights { display: grid; gap: 2px; text-align: right; font-size: 12px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+                .gate-list-weights b { color: var(--text-2); }
+                .gate-list-net b { color: var(--text); font-size: 13px; }
+
+                .gate-close-summary {
+                    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+                    padding: 14px; border-radius: var(--radius-lg); background: var(--surface-2); border: 1px solid var(--border);
+                }
+                .gate-close-summary > div { display: grid; gap: 2px; min-width: 0; font-size: 12px; }
+                .gate-close-summary b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+                .gate-close-net { font-size: 18px !important; }
+
+                @media (max-width: 1200px) {
+                    .gate-grid { grid-template-columns: minmax(0, 1fr); }
+                    .gate-side { position: static; order: -1; }
+                    .gate-no-order { display: none; }
+                }
+                @media (max-width: 720px) {
+                    .gate-form { grid-template-columns: minmax(0, 1fr); }
+                    .gate-steps { grid-template-columns: minmax(0, 1fr); }
+                    .gate-scale-readout { font-size: 44px; }
+                    .gate-close-summary { grid-template-columns: minmax(0, 1fr); }
+                    .gate-actions > * { flex: 1 1 100%; }
+                }
+            `}</style>
         </div>
     );
 }

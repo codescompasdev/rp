@@ -1,18 +1,50 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import {
+    AlertTriangle,
+    ArrowDownWideNarrow,
+    ArrowUpNarrowWide,
+    Boxes,
+    ChevronRight,
+    ChevronsDownUp,
+    ChevronsUpDown,
+    FilePlus2,
+    FolderPlus,
+    Layers,
+    Package,
+    PackageMinus,
+    PackagePlus,
+    Pencil,
+    Plus,
+    Trash2,
+    Wallet,
+} from 'lucide-react';
 import api from '@/lib/api';
+import Modal from '@/components/UI/Modal';
+import PageHeader from '@/components/UI/PageHeader';
+import Card from '@/components/UI/Card';
+import StatCard from '@/components/UI/StatCard';
+import Button from '@/components/UI/Button';
+import Field from '@/components/UI/Field';
+import Alert from '@/components/UI/Alert';
+import SearchInput from '@/components/UI/SearchInput';
+import EmptyState from '@/components/UI/EmptyState';
+import { Badge } from '@/components/UI/Badge';
+import { fmtNum as fmtNumber } from '@/lib/format';
+
+const NUM_LOCALE = 'de-DE';
 
 function fmtKg(value) {
-    return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return Number(value || 0).toLocaleString(NUM_LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtTons(valueKg) {
-    return (Number(valueKg || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (Number(valueKg || 0) / 1000).toLocaleString(NUM_LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtMoney(value) {
-    return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return Number(value || 0).toLocaleString(NUM_LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function toNumber(value, fallback = 0) {
@@ -613,231 +645,245 @@ export default function InventoryPage() {
         }
     };
 
+    const totalValue = rows.reduce((sum, row) => sum + toNumber(row.stockKg) * toNumber(row.avgBuyPrice), 0);
+    const negativeRows = rows.filter((row) => toNumber(row.stockKg) < -0.009).length;
+    const materialCount = new Set(rows.map((row) => row.materialId).filter(Boolean)).size;
+    const statusTone = /nije|neusp|greš|error|failed/i.test(status) ? 'danger' : 'success';
+
+    const expandAll = () => {
+        const cats = {};
+        const subs = {};
+        filteredTree.forEach((category) => {
+            cats[category.id] = true;
+            category.subcategories.forEach((subcategory) => { subs[subcategory.id] = true; });
+        });
+        setExpandedCategories(cats);
+        setExpandedSubcategories(subs);
+    };
+    const collapseAll = () => {
+        setExpandedCategories({});
+        setExpandedSubcategories({});
+        setExpandedMaterials({});
+    };
+
+    const IconAction = ({ icon, label, onClick, disabled, tone }) => (
+        <Button variant={tone === 'danger' ? 'ghost' : 'ghost'} size="sm" icon={icon} aria-label={label} title={label} onClick={onClick} disabled={disabled} className={tone === 'danger' ? 'inv-danger' : tone === 'success' ? 'inv-success' : tone === 'warn' ? 'inv-warn' : ''} />
+    );
+
     return (
-        <div style={{ display: 'grid', gap: 12, height: '100%', alignContent: 'start' }}>
-            <div style={{ background: '#fff', border: '1px solid #dbe3ee', borderRadius: 12, padding: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div>
-                        <div style={{ fontSize: 20, fontWeight: 800 }}>Inventory</div>
-                        <div style={{ marginTop: 4, fontSize: 12, color: '#64748b' }}>
-                            Kategorija {'->'} Podkategorija {'->'} Materijal {'->'} Podmaterijal
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <button type="button" className="btn btn-primary" onClick={openCreateCategory}>+ Kategorija</button>
-                        <button type="button" className="btn" onClick={() => openCreateSubcategory()}>+ Podkategorija</button>
-                        <button type="button" className="btn" onClick={() => openCreateMaterial()}>+ Materijal</button>
-                        <button type="button" className="btn" onClick={() => openCreateVariant()}>+ Podmaterijal</button>
-                    </div>
-                </div>
+        <div className="ui-page">
+            <PageHeader
+                title="Materijali"
+                subtitle="Katalog i stanje · Kategorija → Podkategorija → Materijal → Podmaterijal"
+                actions={(
+                    <>
+                        <Button variant="secondary" icon={Plus} onClick={() => openCreateSubcategory()}>Podkategorija</Button>
+                        <Button variant="secondary" icon={Plus} onClick={() => openCreateMaterial()}>Materijal</Button>
+                        <Button variant="secondary" icon={Plus} onClick={() => openCreateVariant()}>Podmaterijal</Button>
+                        <Button icon={Plus} onClick={openCreateCategory}>Kategorija</Button>
+                    </>
+                )}
+            />
 
-                <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 160px 120px', gap: 8 }} className="controls-grid">
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search..."
-                        style={{ width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                    />
-                    <select
-                        value={sortKey}
-                        onChange={(e) => setSortKey(e.target.value)}
-                        style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                    >
-                        <option value="name">Sort: Naziv</option>
-                        <option value="stockKg">Sort: Stanje</option>
-                    </select>
-                    <select
-                        value={sortDir}
-                        onChange={(e) => setSortDir(e.target.value)}
-                        style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8 }}
-                    >
-                        <option value="asc">ASC</option>
-                        <option value="desc">DESC</option>
-                    </select>
-                </div>
+            <div className="ui-kpi-grid">
+                <StatCard label="Ukupno stanje" icon={Boxes} value={`${fmtTons(totalKg)} t`} hint={`${fmtKg(totalKg)} kg${query ? ' · filtrirano' : ''}`} loading={loading} />
+                <StatCard label="Vrijednost zalihe" icon={Wallet} tone="success" value={`${fmtMoney(totalValue)} KM`} hint="stanje × prosječna nabavna" loading={loading} />
+                <StatCard label="Materijala" icon={Package} value={fmtNumber(materialCount)} hint={`${fmtNumber(filteredTree.length)} kategorija`} loading={loading} />
+                <StatCard label="Negativno stanje" icon={AlertTriangle} tone={negativeRows ? 'danger' : 'success'} value={fmtNumber(negativeRows)} hint={negativeRows ? 'stavki za provjeru' : 'sve u redu'} loading={loading} />
             </div>
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span className="pill">Ukupno: {fmtTons(totalKg)} t</span>
-                <span className="pill alt">Kategorije: {filteredTree.length}</span>
-                {status ? <span className="pill ok">{status}</span> : null}
-            </div>
+            {status && <Alert tone={statusTone} onClose={() => setStatus('')}>{status}</Alert>}
 
-            <div style={{ background: '#fff', border: '1px solid #dbe3ee', borderRadius: 12, overflow: 'hidden' }}>
+            <Card flush>
+                <div className="ui-toolbar" style={{ padding: 14, borderBottom: '1px solid var(--border)' }}>
+                    <SearchInput className="grow" value={search} onChange={setSearch} placeholder="Pretraži kategoriju, materijal, šifru ili podmaterijal..." />
+                    <select className="ui-input" style={{ width: 'auto' }} value={sortKey} onChange={(e) => setSortKey(e.target.value)} aria-label="Sortiranje">
+                        <option value="name">Sortiraj: naziv</option>
+                        <option value="stockKg">Sortiraj: stanje</option>
+                    </select>
+                    <Button variant="secondary" icon={sortDir === 'asc' ? ArrowUpNarrowWide : ArrowDownWideNarrow} onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}>
+                        {sortDir === 'asc' ? 'Rastuće' : 'Opadajuće'}
+                    </Button>
+                    <Button variant="ghost" icon={ChevronsUpDown} onClick={expandAll}>Proširi sve</Button>
+                    <Button variant="ghost" icon={ChevronsDownUp} onClick={collapseAll}>Skupi sve</Button>
+                </div>
+
                 {loading ? (
-                    <div style={{ padding: 24, color: '#64748b' }}>Učitavanje...</div>
+                    <div className="stack" style={{ padding: 18, gap: 10 }}>
+                        {[0, 1, 2, 3].map((i) => <div key={i} className="ui-skeleton" style={{ height: 40 }} />)}
+                    </div>
                 ) : error ? (
-                    <div style={{ padding: 24, color: '#b91c1c' }}>{error}</div>
+                    <div style={{ padding: 18 }}><Alert tone="danger">{error}</Alert></div>
+                ) : filteredTree.length === 0 ? (
+                    <EmptyState icon={Boxes} title={query ? 'Nema rezultata pretrage' : 'Katalog je prazan'} />
                 ) : (
-                    <div className="responsive-table">
-                        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+                    <div className="ui-table-wrap">
+                        <table className="inv-table">
                             <thead>
-                                <tr style={{ background: '#f8fafc' }}>
-                                    <th className="th-left">Naziv</th>
-                                    <th className="th-left col-level">Nivo</th>
-                                    <th className="th-right col-kg">Stanje (kg)</th>
-                                    <th className="th-right col-tons">Stanje (t)</th>
-                                    <th className="th-right col-buy">Nabavna</th>
-                                    <th className="th-right col-market">Market</th>
-                                    <th className="th-left col-actions">Akcije</th>
+                                <tr>
+                                    <th>Naziv</th>
+                                    <th>Nivo</th>
+                                    <th className="num">Stanje (kg)</th>
+                                    <th className="num">Stanje (t)</th>
+                                    <th className="num">Nabavna</th>
+                                    <th className="num">Market</th>
+                                    <th style={{ textAlign: 'right' }}>Akcije</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredTree.map((category) => (
                                     <Fragment key={category.id}>
-                                        <tr className="row-category">
-                                            <td className="td-name">
+                                        <tr className="inv-row inv-cat">
+                                            <td>
                                                 <button
                                                     type="button"
+                                                    className="inv-toggle"
+                                                    aria-expanded={Boolean(expandedCategories[category.id])}
                                                     onClick={() => setExpandedCategories((prev) => ({ ...prev, [category.id]: !prev[category.id] }))}
-                                                    className="toggle-btn"
                                                 >
-                                                    {expandedCategories[category.id] ? '▾' : '▸'} {category.name}
-                                                    <span className="children-hint">{category.subcategories.length} podkat</span>
+                                                    <ChevronRight size={15} className="inv-chev" />
+                                                    <span>{category.name}</span>
+                                                    <span className="inv-hint">{category.subcategories.length} podkat.</span>
                                                 </button>
                                             </td>
-                                            <td className="td-subtle col-level"><span className="level-badge level-cat">Kategorija</span></td>
-                                            <td className="td-right strong col-kg">{fmtKg(category.stockKg)}</td>
-                                            <td className="td-right strong col-tons">{fmtTons(category.stockKg)}</td>
-                                            <td className="td-right col-buy">-</td>
-                                            <td className="td-right col-market">-</td>
-                                            <td className="td-actions col-actions">
-                                                <button type="button" className="mini" onClick={() => openEditCategory(category.name)}>Uredi</button>
-                                                <button type="button" className="mini danger" onClick={() => deleteCategory(category.name)}>Obriši</button>
-                                                <button type="button" className="mini" onClick={() => openCreateSubcategory(category.name)}>+ Podkat</button>
+                                            <td><Badge tone="info">Kategorija</Badge></td>
+                                            <td className="num" style={{ fontWeight: 700 }}>{fmtKg(category.stockKg)}</td>
+                                            <td className="num" style={{ fontWeight: 700 }}>{fmtTons(category.stockKg)}</td>
+                                            <td className="num muted">—</td>
+                                            <td className="num muted">—</td>
+                                            <td>
+                                                <div className="inv-actions">
+                                                    <IconAction icon={FolderPlus} label="Dodaj podkategoriju" onClick={() => openCreateSubcategory(category.name)} />
+                                                    <IconAction icon={Pencil} label="Uredi kategoriju" onClick={() => openEditCategory(category.name)} />
+                                                    <IconAction icon={Trash2} label="Obriši kategoriju" tone="danger" onClick={() => deleteCategory(category.name)} />
+                                                </div>
                                             </td>
                                         </tr>
 
                                         {expandedCategories[category.id] && category.subcategories.map((subcategory) => (
                                             <Fragment key={subcategory.id}>
-                                                <tr className="row-subcategory">
-                                                    <td className="td-name sub">
+                                                <tr className="inv-row inv-sub">
+                                                    <td>
                                                         <button
                                                             type="button"
+                                                            className="inv-toggle"
+                                                            style={{ paddingLeft: 22 }}
+                                                            aria-expanded={Boolean(expandedSubcategories[subcategory.id])}
                                                             onClick={() => setExpandedSubcategories((prev) => ({ ...prev, [subcategory.id]: !prev[subcategory.id] }))}
-                                                            className="toggle-btn"
                                                         >
-                                                            {expandedSubcategories[subcategory.id] ? '▾' : '▸'} {subcategory.name}
-                                                            <span className="children-hint">{subcategory.materials.length} mat</span>
+                                                            <ChevronRight size={15} className="inv-chev" />
+                                                            <span>{subcategory.name}</span>
+                                                            <span className="inv-hint">{subcategory.materials.length} mat.</span>
                                                         </button>
                                                     </td>
-                                                    <td className="td-subtle col-level"><span className="level-badge level-sub">Podkategorija</span></td>
-                                                    <td className="td-right col-kg">{fmtKg(subcategory.stockKg)}</td>
-                                                    <td className="td-right col-tons">{fmtTons(subcategory.stockKg)}</td>
-                                                    <td className="td-right col-buy">-</td>
-                                                    <td className="td-right col-market">-</td>
-                                                    <td className="td-actions col-actions">
-                                                        <button type="button" className="mini" onClick={() => openEditSubcategory(category.name, subcategory.name)}>Uredi</button>
-                                                        <button type="button" className="mini danger" onClick={() => deleteSubcategory(category.name, subcategory.name)}>Obriši</button>
-                                                        <button type="button" className="mini" onClick={() => openCreateMaterial(category.name, subcategory.name)}>+ Mat</button>
+                                                    <td><Badge tone="violet">Podkategorija</Badge></td>
+                                                    <td className="num" style={{ fontWeight: 600 }}>{fmtKg(subcategory.stockKg)}</td>
+                                                    <td className="num">{fmtTons(subcategory.stockKg)}</td>
+                                                    <td className="num muted">—</td>
+                                                    <td className="num muted">—</td>
+                                                    <td>
+                                                        <div className="inv-actions">
+                                                            <IconAction icon={FilePlus2} label="Dodaj materijal" onClick={() => openCreateMaterial(category.name, subcategory.name)} />
+                                                            <IconAction icon={Pencil} label="Uredi podkategoriju" onClick={() => openEditSubcategory(category.name, subcategory.name)} />
+                                                            <IconAction icon={Trash2} label="Obriši podkategoriju" tone="danger" onClick={() => deleteSubcategory(category.name, subcategory.name)} />
+                                                        </div>
                                                     </td>
                                                 </tr>
 
                                                 {expandedSubcategories[subcategory.id] && subcategory.materials.map((material) => (
                                                     <Fragment key={material.id}>
-                                                        <tr className="row-material">
-                                                            <td className="td-name mat">
+                                                        <tr className="inv-row inv-mat">
+                                                            <td>
                                                                 <button
                                                                     type="button"
+                                                                    className="inv-toggle"
+                                                                    style={{ paddingLeft: 44 }}
+                                                                    aria-expanded={Boolean(expandedMaterials[material.id])}
                                                                     onClick={() => setExpandedMaterials((prev) => ({ ...prev, [material.id]: !prev[material.id] }))}
-                                                                    className="toggle-btn"
                                                                 >
-                                                                    {expandedMaterials[material.id] ? '▾' : '▸'} {material.name}
-                                                                    <span className="children-hint">{material.variants.length} podmat</span>
+                                                                    <ChevronRight size={15} className="inv-chev" />
+                                                                    <span className="inv-code">{material.code}</span>
+                                                                    <span>{material.name}</span>
+                                                                    <span className="inv-hint">{material.variants.length} podmat.</span>
                                                                 </button>
-                                                                <span className="code-chip">{material.code}</span>
                                                             </td>
-                                                            <td className="td-subtle col-level"><span className="level-badge level-mat">Materijal</span></td>
-                                                            <td className="td-right col-kg">{fmtKg(material.stockKg)}</td>
-                                                            <td className="td-right col-tons">{fmtTons(material.stockKg)}</td>
-                                                            <td className="td-right col-buy">-</td>
-                                                            <td className="td-right col-market">-</td>
-                                                            <td className="td-actions col-actions">
-                                                                <button
-                                                                    type="button"
-                                                                    className="mini success"
-                                                                    onClick={() => openStockModal({
-                                                                        mode: 'in',
-                                                                        materialId: material.materialId,
-                                                                        materialLabel: `${material.code} - ${material.name}`,
-                                                                        unitPrice: Number(materialsById.get(material.materialId)?.buyPrice || 0),
-                                                                    })}
-                                                                    disabled={!material.materialId}
-                                                                >
-                                                                    + Stanje
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="mini warn"
-                                                                    onClick={() => openStockModal({
-                                                                        mode: 'out',
-                                                                        materialId: material.materialId,
-                                                                        materialLabel: `${material.code} - ${material.name}`,
-                                                                        unitPrice: Number(materialsById.get(material.materialId)?.buyPrice || 0),
-                                                                    })}
-                                                                    disabled={!material.materialId}
-                                                                >
-                                                                    - Stanje
-                                                                </button>
-                                                                <button type="button" className="mini" onClick={() => openEditMaterial(material.materialId)}>Uredi</button>
-                                                                <button type="button" className="mini danger" onClick={() => deleteMaterial(material.materialId)}>Obriši</button>
-                                                                <button type="button" className="mini" onClick={() => openCreateVariant(material.materialId)}>+ Podmat</button>
+                                                            <td><Badge tone="success">Materijal</Badge></td>
+                                                            <td className="num" style={{ fontWeight: 600, color: toNumber(material.stockKg) < 0 ? 'var(--danger-ink)' : undefined }}>{fmtKg(material.stockKg)}</td>
+                                                            <td className="num">{fmtTons(material.stockKg)}</td>
+                                                            <td className="num muted">—</td>
+                                                            <td className="num muted">—</td>
+                                                            <td>
+                                                                <div className="inv-actions">
+                                                                    <IconAction
+                                                                        icon={PackagePlus}
+                                                                        label="Dodaj stanje"
+                                                                        tone="success"
+                                                                        disabled={!material.materialId}
+                                                                        onClick={() => openStockModal({
+                                                                            mode: 'in',
+                                                                            materialId: material.materialId,
+                                                                            materialLabel: `${material.code} - ${material.name}`,
+                                                                            unitPrice: Number(materialsById.get(material.materialId)?.buyPrice || 0),
+                                                                        })}
+                                                                    />
+                                                                    <IconAction
+                                                                        icon={PackageMinus}
+                                                                        label="Skini stanje"
+                                                                        tone="warn"
+                                                                        disabled={!material.materialId}
+                                                                        onClick={() => openStockModal({
+                                                                            mode: 'out',
+                                                                            materialId: material.materialId,
+                                                                            materialLabel: `${material.code} - ${material.name}`,
+                                                                            unitPrice: Number(materialsById.get(material.materialId)?.buyPrice || 0),
+                                                                        })}
+                                                                    />
+                                                                    <IconAction icon={Layers} label="Dodaj podmaterijal" onClick={() => openCreateVariant(material.materialId)} />
+                                                                    <IconAction icon={Pencil} label="Uredi materijal" onClick={() => openEditMaterial(material.materialId)} />
+                                                                    <IconAction icon={Trash2} label="Obriši materijal" tone="danger" onClick={() => deleteMaterial(material.materialId)} />
+                                                                </div>
                                                             </td>
                                                         </tr>
 
                                                         {expandedMaterials[material.id] && material.variants.map((variant) => (
-                                                            <tr key={variant.id} className="row-variant">
-                                                                <td className="td-name var">- {variant.name}</td>
-                                                                <td className="td-subtle col-level"><span className="level-badge level-var">Podmaterijal</span></td>
-                                                                <td className="td-right col-kg">{fmtKg(variant.stockKg)}</td>
-                                                                <td className="td-right col-tons">{fmtTons(variant.stockKg)}</td>
-                                                                <td className="td-right col-buy">{fmtMoney(variant.avgBuyPrice)}</td>
-                                                                <td className="td-right col-market">{fmtMoney(variant.mktPrice)}</td>
-                                                                <td className="td-actions col-actions">
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mini success"
-                                                                        onClick={() => openStockModal({
-                                                                            mode: 'in',
-                                                                            materialId: variant.materialId,
-                                                                            variantId: variant.variantId,
-                                                                            materialLabel: `${variant.materialCode || ''} - ${variant.name}`,
-                                                                            unitPrice: variant.avgBuyPrice,
-                                                                        })}
-                                                                        disabled={!variant.variantId}
-                                                                    >
-                                                                        + Stanje
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mini warn"
-                                                                        onClick={() => openStockModal({
-                                                                            mode: 'out',
-                                                                            materialId: variant.materialId,
-                                                                            variantId: variant.variantId,
-                                                                            materialLabel: `${variant.materialCode || ''} - ${variant.name}`,
-                                                                            unitPrice: variant.avgBuyPrice,
-                                                                        })}
-                                                                        disabled={!variant.variantId}
-                                                                    >
-                                                                        - Stanje
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mini"
-                                                                        onClick={() => openEditVariant(variant.materialId, variant.variantId)}
-                                                                        disabled={!variant.variantId}
-                                                                    >
-                                                                        Uredi
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="mini danger"
-                                                                        onClick={() => deleteVariant(variant.materialId, variant.variantId)}
-                                                                        disabled={!variant.variantId}
-                                                                    >
-                                                                        Obriši
-                                                                    </button>
+                                                            <tr key={variant.id} className="inv-row inv-var">
+                                                                <td><span className="inv-var-name">{variant.name}</span></td>
+                                                                <td><Badge tone="outline">Podmaterijal</Badge></td>
+                                                                <td className="num" style={{ color: toNumber(variant.stockKg) < 0 ? 'var(--danger-ink)' : undefined }}>{fmtKg(variant.stockKg)}</td>
+                                                                <td className="num">{fmtTons(variant.stockKg)}</td>
+                                                                <td className="num">{fmtMoney(variant.avgBuyPrice)}</td>
+                                                                <td className="num">{fmtMoney(variant.mktPrice)}</td>
+                                                                <td>
+                                                                    <div className="inv-actions">
+                                                                        <IconAction
+                                                                            icon={PackagePlus}
+                                                                            label="Dodaj stanje"
+                                                                            tone="success"
+                                                                            disabled={!variant.variantId}
+                                                                            onClick={() => openStockModal({
+                                                                                mode: 'in',
+                                                                                materialId: variant.materialId,
+                                                                                variantId: variant.variantId,
+                                                                                materialLabel: `${variant.materialCode || ''} - ${variant.name}`,
+                                                                                unitPrice: variant.avgBuyPrice,
+                                                                            })}
+                                                                        />
+                                                                        <IconAction
+                                                                            icon={PackageMinus}
+                                                                            label="Skini stanje"
+                                                                            tone="warn"
+                                                                            disabled={!variant.variantId}
+                                                                            onClick={() => openStockModal({
+                                                                                mode: 'out',
+                                                                                materialId: variant.materialId,
+                                                                                variantId: variant.variantId,
+                                                                                materialLabel: `${variant.materialCode || ''} - ${variant.name}`,
+                                                                                unitPrice: variant.avgBuyPrice,
+                                                                            })}
+                                                                        />
+                                                                        <IconAction icon={Pencil} label="Uredi podmaterijal" disabled={!variant.variantId} onClick={() => openEditVariant(variant.materialId, variant.variantId)} />
+                                                                        <IconAction icon={Trash2} label="Obriši podmaterijal" tone="danger" disabled={!variant.variantId} onClick={() => deleteVariant(variant.materialId, variant.variantId)} />
+                                                                    </div>
                                                                 </td>
                                                             </tr>
                                                         ))}
@@ -851,522 +897,167 @@ export default function InventoryPage() {
                         </table>
                     </div>
                 )}
-            </div>
+            </Card>
 
-            {modal.open && (
-                <div className="modal-backdrop" onClick={closeModal}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <h3 style={{ margin: 0 }}>{modalTitle(modal.mode, modal.entity)}</h3>
-                        <form onSubmit={submitModal} style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-                            {(modal.entity === 'category' || modal.entity === 'subcategory' || modal.entity === 'material' || modal.entity === 'variant') && (
-                                <>
-                                    {(modal.entity === 'subcategory' || modal.entity === 'material') ? (
-                                        <label className="field">
-                                            <span>Kategorija</span>
-                                            <select
-                                                value={form.categoryId || ''}
-                                                onChange={(e) => setForm((prev) => ({ ...prev, categoryId: e.target.value, subcategoryId: '' }))}
-                                                disabled={modal.entity === 'subcategory' && modal.mode === 'edit'}
-                                            >
-                                                <option value="">Odaberi kategoriju</option>
-                                                {(taxonomyTree || []).map((cat) => (
-                                                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                                                ))}
-                                            </select>
-                                        </label>
-                                    ) : null}
+            <Modal open={modal.open} onClose={closeModal} title={modalTitle(modal.mode, modal.entity)} width={620}>
+                <form onSubmit={submitModal}>
+                    <div className="ui-form-grid">
+                        {(modal.entity === 'subcategory' || modal.entity === 'material') && (
+                            <Field label="Kategorija" span={modal.entity === 'subcategory' ? 'all' : undefined}>
+                                <select
+                                    className="ui-input"
+                                    value={form.categoryId || ''}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, categoryId: e.target.value, subcategoryId: '' }))}
+                                    disabled={modal.entity === 'subcategory' && modal.mode === 'edit'}
+                                >
+                                    <option value="">Odaberi kategoriju</option>
+                                    {(taxonomyTree || []).map((cat) => (
+                                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                    ))}
+                                </select>
+                            </Field>
+                        )}
 
-                                    {(modal.entity === 'subcategory' || modal.entity === 'category') ? (
-                                        <label className="field">
-                                            <span>Naziv</span>
-                                            <input
-                                                value={form.name || ''}
-                                                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                                                placeholder="Naziv"
-                                            />
-                                        </label>
-                                    ) : null}
+                        {(modal.entity === 'subcategory' || modal.entity === 'category') && (
+                            <Field label="Naziv" required span="all">
+                                <input className="ui-input" value={form.name || ''} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Naziv" autoFocus />
+                            </Field>
+                        )}
 
-                                    {modal.entity === 'material' ? (
-                                        <>
-                                            <label className="field">
-                                                <span>Podkategorija</span>
-                                                <select
-                                                    value={form.subcategoryId || ''}
-                                                    onChange={(e) => setForm((prev) => ({ ...prev, subcategoryId: e.target.value }))}
-                                                >
-                                                    <option value="">Odaberi podkategoriju</option>
-                                                    {modalSubcategories.map((sub) => (
-                                                        <option key={sub.id} value={sub.id}>{sub.name}</option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <label className="field">
-                                                <span>Kod</span>
-                                                <input
-                                                    value={form.code || ''}
-                                                    onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))}
-                                                    placeholder="MAT-001"
-                                                />
-                                            </label>
-                                            <label className="field">
-                                                <span>Naziv</span>
-                                                <input
-                                                    value={form.name || ''}
-                                                    onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                                                    placeholder="Bakar milberry"
-                                                />
-                                            </label>
-                                            <div className="split">
-                                                <label className="field">
-                                                    <span>Jedinica</span>
-                                                    <input
-                                                        value={form.baseUnit || 'KG'}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, baseUnit: e.target.value }))}
-                                                    />
-                                                </label>
-                                                <label className="field">
-                                                    <span>Nabavna cijena</span>
-                                                    <input
-                                                        type="number"
-                                                        step="0.0001"
-                                                        value={form.buyPrice}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, buyPrice: e.target.value }))}
-                                                    />
-                                                </label>
-                                                <label className="field">
-                                                    <span>Market cijena</span>
-                                                    <input
-                                                        type="number"
-                                                        step="0.0001"
-                                                        value={form.basePrice}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, basePrice: e.target.value }))}
-                                                    />
-                                                </label>
-                                            </div>
-                                        </>
-                                    ) : null}
+                        {modal.entity === 'material' && (
+                            <>
+                                <Field label="Podkategorija">
+                                    <select className="ui-input" value={form.subcategoryId || ''} onChange={(e) => setForm((prev) => ({ ...prev, subcategoryId: e.target.value }))}>
+                                        <option value="">Odaberi podkategoriju</option>
+                                        {modalSubcategories.map((sub) => (
+                                            <option key={sub.id} value={sub.id}>{sub.name}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field label="Šifra" required>
+                                    <input className="ui-input font-code" value={form.code || ''} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))} placeholder="MAT-001" />
+                                </Field>
+                                <Field label="Naziv" required>
+                                    <input className="ui-input" value={form.name || ''} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Bakar milberry" />
+                                </Field>
+                                <Field label="Jedinica">
+                                    <input className="ui-input" value={form.baseUnit || 'KG'} onChange={(e) => setForm((prev) => ({ ...prev, baseUnit: e.target.value }))} />
+                                </Field>
+                                <Field label="Nabavna cijena (KM/kg)">
+                                    <input type="number" step="0.0001" className="ui-input font-mono" value={form.buyPrice} onChange={(e) => setForm((prev) => ({ ...prev, buyPrice: e.target.value }))} />
+                                </Field>
+                                <Field label="Market cijena (KM/kg)">
+                                    <input type="number" step="0.0001" className="ui-input font-mono" value={form.basePrice} onChange={(e) => setForm((prev) => ({ ...prev, basePrice: e.target.value }))} />
+                                </Field>
+                            </>
+                        )}
 
-                                    {modal.entity === 'variant' ? (
-                                        <>
-                                            <label className="field">
-                                                <span>Materijal</span>
-                                                <select
-                                                    value={form.materialId || ''}
-                                                    onChange={(e) => {
-                                                        const m = materialsById.get(e.target.value);
-                                                        setForm((prev) => ({
-                                                            ...prev,
-                                                            materialId: e.target.value,
-                                                            buyPrice: prev.buyPrice === '' ? (m?.buyPrice ?? '') : prev.buyPrice,
-                                                        }));
-                                                    }}
-                                                    disabled={modal.mode === 'edit'}
-                                                >
-                                                    <option value="">Odaberi materijal</option>
-                                                    {(materialsMeta || []).map((m) => (
-                                                        <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <div className="split">
-                                                <label className="field">
-                                                    <span>Naziv podmaterijala</span>
-                                                    <input
-                                                        value={form.grade || ''}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, grade: e.target.value }))}
-                                                        placeholder="Bakar 2"
-                                                    />
-                                                </label>
-                                                <label className="field">
-                                                    <span>Condition</span>
-                                                    <input
-                                                        value={form.condition || 'Standard'}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, condition: e.target.value }))}
-                                                    />
-                                                </label>
-                                            </div>
-                                            <div className="split">
-                                                <label className="field">
-                                                    <span>Nabavna cijena</span>
-                                                    <input
-                                                        type="number"
-                                                        step="0.0001"
-                                                        value={form.buyPrice}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, buyPrice: e.target.value }))}
-                                                    />
-                                                </label>
-                                                <label className="field">
-                                                    <span>Min. čistoća (%)</span>
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        value={form.minPurity}
-                                                        onChange={(e) => setForm((prev) => ({ ...prev, minPurity: e.target.value }))}
-                                                    />
-                                                </label>
-                                            </div>
-                                        </>
-                                    ) : null}
-                                </>
-                            )}
-
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                                <button type="button" className="btn" onClick={closeModal} disabled={saving}>Otkaži</button>
-                                <button type="submit" className="btn btn-primary" disabled={saving}>
-                                    {saving ? 'Čuvanje...' : 'Sačuvaj'}
-                                </button>
-                            </div>
-                        </form>
+                        {modal.entity === 'variant' && (
+                            <>
+                                <Field label="Materijal" span="all">
+                                    <select
+                                        className="ui-input"
+                                        value={form.materialId || ''}
+                                        onChange={(e) => {
+                                            const m = materialsById.get(e.target.value);
+                                            setForm((prev) => ({
+                                                ...prev,
+                                                materialId: e.target.value,
+                                                buyPrice: prev.buyPrice === '' ? (m?.buyPrice ?? '') : prev.buyPrice,
+                                            }));
+                                        }}
+                                        disabled={modal.mode === 'edit'}
+                                    >
+                                        <option value="">Odaberi materijal</option>
+                                        {(materialsMeta || []).map((m) => (
+                                            <option key={m.id} value={m.id}>{m.code} - {m.name}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field label="Naziv podmaterijala" required>
+                                    <input className="ui-input" value={form.grade || ''} onChange={(e) => setForm((prev) => ({ ...prev, grade: e.target.value }))} placeholder="Bakar 2" />
+                                </Field>
+                                <Field label="Stanje (condition)">
+                                    <input className="ui-input" value={form.condition || 'Standard'} onChange={(e) => setForm((prev) => ({ ...prev, condition: e.target.value }))} />
+                                </Field>
+                                <Field label="Nabavna cijena (KM/kg)">
+                                    <input type="number" step="0.0001" className="ui-input font-mono" value={form.buyPrice} onChange={(e) => setForm((prev) => ({ ...prev, buyPrice: e.target.value }))} />
+                                </Field>
+                                <Field label="Min. čistoća (%)">
+                                    <input type="number" step="0.01" className="ui-input font-mono" value={form.minPurity} onChange={(e) => setForm((prev) => ({ ...prev, minPurity: e.target.value }))} />
+                                </Field>
+                            </>
+                        )}
                     </div>
-                </div>
-            )}
-
-            {stockModal.open && (
-                <div className="modal-backdrop" onClick={closeStockModal}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <h3 style={{ margin: 0 }}>{stockModal.mode === 'in' ? 'Dodaj stanje' : 'Skini stanje'}</h3>
-                        <div style={{ marginTop: 6, fontSize: 12, color: '#475569' }}>{stockModal.materialLabel}</div>
-                        <form onSubmit={submitStockModal} style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-                            <div className="split">
-                                <label className="field">
-                                    <span>Količina (kg)</span>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        value={stockModal.quantity}
-                                        onChange={(e) => setStockModal((prev) => ({ ...prev, quantity: e.target.value }))}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Cijena po kg</span>
-                                    <input
-                                        type="number"
-                                        step="0.0001"
-                                        value={stockModal.unitPrice}
-                                        onChange={(e) => setStockModal((prev) => ({ ...prev, unitPrice: e.target.value }))}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Zona</span>
-                                    <input
-                                        value={stockModal.zone}
-                                        onChange={(e) => setStockModal((prev) => ({ ...prev, zone: e.target.value }))}
-                                    />
-                                </label>
-                            </div>
-                            <label className="field">
-                                <span>Napomena</span>
-                                <input
-                                    value={stockModal.note}
-                                    onChange={(e) => setStockModal((prev) => ({ ...prev, note: e.target.value }))}
-                                    placeholder="Opcionalno"
-                                />
-                            </label>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-                                <button type="button" className="btn" onClick={closeStockModal} disabled={stockSaving}>Otkaži</button>
-                                <button type="submit" className="btn btn-primary" disabled={stockSaving}>
-                                    {stockSaving ? 'Čuvanje...' : (stockModal.mode === 'in' ? 'Dodaj stanje' : 'Skini stanje')}
-                                </button>
-                            </div>
-                        </form>
+                    <div className="ui-modal-footer">
+                        <Button variant="secondary" onClick={closeModal} disabled={saving}>Otkaži</Button>
+                        <Button type="submit" disabled={saving}>{saving ? 'Čuvanje...' : 'Sačuvaj'}</Button>
                     </div>
-                </div>
-            )}
+                </form>
+            </Modal>
 
-            <style jsx>{`
-                .controls-grid {
-                    grid-template-columns: 1fr 160px 120px;
+            <Modal
+                open={stockModal.open}
+                onClose={closeStockModal}
+                title={stockModal.mode === 'in' ? 'Dodaj stanje' : 'Skini stanje'}
+                subtitle={stockModal.materialLabel}
+                width={560}
+            >
+                <form onSubmit={submitStockModal}>
+                    <Alert tone={stockModal.mode === 'in' ? 'info' : 'warning'}>
+                        {stockModal.mode === 'in' ? 'Ručna korekcija: stanje se uvećava i knjiži kao ulaz.' : 'Ručna korekcija: stanje se umanjuje i knjiži kao izlaz.'}
+                    </Alert>
+                    <div className="ui-form-grid" style={{ marginTop: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+                        <Field label="Količina (kg)" required>
+                            <input type="number" step="0.01" className="ui-input font-mono" value={stockModal.quantity} onChange={(e) => setStockModal((prev) => ({ ...prev, quantity: e.target.value }))} autoFocus />
+                        </Field>
+                        <Field label="Cijena po kg">
+                            <input type="number" step="0.0001" className="ui-input font-mono" value={stockModal.unitPrice} onChange={(e) => setStockModal((prev) => ({ ...prev, unitPrice: e.target.value }))} />
+                        </Field>
+                        <Field label="Zona">
+                            <input className="ui-input" value={stockModal.zone} onChange={(e) => setStockModal((prev) => ({ ...prev, zone: e.target.value }))} />
+                        </Field>
+                        <Field label="Napomena" span="all">
+                            <input className="ui-input" value={stockModal.note} onChange={(e) => setStockModal((prev) => ({ ...prev, note: e.target.value }))} placeholder="Opciono" />
+                        </Field>
+                    </div>
+                    <div className="ui-modal-footer">
+                        <Button variant="secondary" onClick={closeStockModal} disabled={stockSaving}>Otkaži</Button>
+                        <Button type="submit" variant={stockModal.mode === 'in' ? 'success' : 'warning'} disabled={stockSaving}>
+                            {stockSaving ? 'Čuvanje...' : (stockModal.mode === 'in' ? 'Dodaj stanje' : 'Skini stanje')}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+
+            <style>{`
+                .inv-table td { padding-top: 8px; padding-bottom: 8px; }
+                .inv-cat { background: var(--surface-2); }
+                .inv-cat:hover { background: var(--surface-3) !important; }
+                .inv-toggle {
+                    display: inline-flex; align-items: center; gap: 8px; padding: 2px 0; border: none; background: transparent;
+                    font-weight: 600; font-size: 13px; color: var(--text); text-align: left; max-width: 520px;
                 }
-                .responsive-table {
-                    width: 100%;
-                    overflow-x: auto;
+                .inv-toggle:hover:not(:disabled) { background: transparent; color: var(--primary-ink); }
+                .inv-chev { color: var(--text-3); transition: transform .15s ease; flex-shrink: 0; }
+                .inv-toggle[aria-expanded='true'] .inv-chev { transform: rotate(90deg); color: var(--primary); }
+                .inv-cat .inv-toggle { font-weight: 700; }
+                .inv-mat .inv-toggle { font-weight: 500; }
+                .inv-hint { font-size: 11px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
+                .inv-code {
+                    font-family: var(--font-code); font-size: 11.5px; font-weight: 600; color: var(--primary-ink);
+                    background: var(--primary-50); padding: 1px 6px; border-radius: 5px; white-space: nowrap;
                 }
-                .responsive-table table {
-                    min-width: 1120px;
+                .inv-var-name { display: inline-block; padding-left: 70px; color: var(--text-2); position: relative; }
+                .inv-var-name::before {
+                    content: ''; position: absolute; left: 52px; top: 50%; width: 10px; height: 1px; background: var(--border-strong);
                 }
-                .th-left {
-                    padding: 10px 12px;
-                    border-bottom: 1px solid #e2e8f0;
-                    text-align: left;
-                    font-size: 12px;
-                    color: #334155;
-                }
-                .th-left:first-child {
-                    position: sticky;
-                    left: 0;
-                    z-index: 3;
-                    background: #f8fafc;
-                }
-                .th-right {
-                    padding: 10px 12px;
-                    border-bottom: 1px solid #e2e8f0;
-                    text-align: right;
-                    font-size: 12px;
-                    color: #334155;
-                }
-                .td-name {
-                    padding: 10px 12px;
-                    border-bottom: 1px solid #eef2f7;
-                    position: sticky;
-                    left: 0;
-                    z-index: 2;
-                    background: #fff;
-                }
-                .td-name.sub {
-                    padding-left: 28px;
-                }
-                .td-name.mat {
-                    padding-left: 46px;
-                }
-                .td-name.var {
-                    padding-left: 66px;
-                }
-                .td-subtle {
-                    padding: 10px 12px;
-                    border-bottom: 1px solid #eef2f7;
-                    color: #64748b;
-                }
-                .td-right {
-                    padding: 10px 12px;
-                    border-bottom: 1px solid #eef2f7;
-                    text-align: right;
-                }
-                .td-right.strong {
-                    font-weight: 700;
-                }
-                .td-actions {
-                    padding: 8px 10px;
-                    border-bottom: 1px solid #eef2f7;
-                    min-width: 220px;
-                    white-space: nowrap;
-                }
-                .row-category {
-                    background: #eef4ff;
-                }
-                .row-category .td-name {
-                    background: #eef4ff;
-                    box-shadow: inset 4px 0 0 #2563eb;
-                }
-                .row-subcategory {
-                    background: #f5f8ff;
-                }
-                .row-subcategory .td-name {
-                    background: #f5f8ff;
-                    box-shadow: inset 4px 0 0 #4f46e5;
-                }
-                .row-material {
-                    background: #f8fbff;
-                }
-                .row-material .td-name {
-                    background: #f8fbff;
-                    box-shadow: inset 4px 0 0 #0891b2;
-                }
-                .row-variant {
-                    background: #fafcff;
-                }
-                .row-variant .td-name {
-                    background: #fafcff;
-                    box-shadow: inset 4px 0 0 #64748b;
-                }
-                .toggle-btn {
-                    border: none;
-                    background: transparent;
-                    cursor: pointer;
-                    font-weight: 700;
-                    padding: 0;
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 8px;
-                }
-                .children-hint {
-                    display: inline-block;
-                    font-size: 10px;
-                    font-weight: 700;
-                    color: #1e40af;
-                    background: #dbeafe;
-                    border: 1px solid #bfdbfe;
-                    border-radius: 999px;
-                    padding: 1px 6px;
-                }
-                .level-badge {
-                    display: inline-block;
-                    font-size: 10px;
-                    font-weight: 800;
-                    border-radius: 999px;
-                    padding: 2px 8px;
-                }
-                .level-cat {
-                    background: #dbeafe;
-                    color: #1e3a8a;
-                }
-                .level-sub {
-                    background: #e0e7ff;
-                    color: #3730a3;
-                }
-                .level-mat {
-                    background: #cffafe;
-                    color: #155e75;
-                }
-                .level-var {
-                    background: #e2e8f0;
-                    color: #334155;
-                }
-                .code-chip {
-                    margin-left: 8px;
-                    font-size: 11px;
-                    color: #475569;
-                    background: #f1f5f9;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 999px;
-                    padding: 2px 6px;
-                }
-                .btn {
-                    border: 1px solid #cbd5e1;
-                    border-radius: 8px;
-                    background: #fff;
-                    color: #0f172a;
-                    padding: 8px 10px;
-                    cursor: pointer;
-                    font-weight: 600;
-                }
-                .btn:hover {
-                    border-color: #94a3b8;
-                }
-                .btn-primary {
-                    background: #1d4ed8;
-                    border-color: #1d4ed8;
-                    color: #fff;
-                }
-                .btn-primary:hover {
-                    background: #1e40af;
-                    border-color: #1e40af;
-                }
-                .mini {
-                    border: 1px solid #dbe3ee;
-                    background: #fff;
-                    color: #0f172a;
-                    border-radius: 7px;
-                    font-size: 11px;
-                    padding: 5px 7px;
-                    cursor: pointer;
-                    margin-right: 6px;
-                }
-                .mini:last-child {
-                    margin-right: 0;
-                }
-                .mini.danger {
-                    color: #b91c1c;
-                    border-color: #fecaca;
-                    background: #fff5f5;
-                }
-                .mini.success {
-                    color: #166534;
-                    border-color: #bbf7d0;
-                    background: #f0fdf4;
-                }
-                .mini.warn {
-                    color: #92400e;
-                    border-color: #fde68a;
-                    background: #fffbeb;
-                }
-                .mini:disabled {
-                    opacity: 0.45;
-                    cursor: not-allowed;
-                }
-                .pill {
-                    padding: 6px 10px;
-                    border-radius: 999px;
-                    background: #eef2ff;
-                    color: #3730a3;
-                    font-size: 12px;
-                    font-weight: 700;
-                }
-                .pill.alt {
-                    background: #ecfeff;
-                    color: #155e75;
-                }
-                .pill.ok {
-                    background: #ecfdf5;
-                    color: #166534;
-                }
-                .modal-backdrop {
-                    position: fixed;
-                    inset: 0;
-                    background: rgba(15, 23, 42, 0.35);
-                    display: grid;
-                    place-items: center;
-                    z-index: 40;
-                    padding: 16px;
-                }
-                .modal {
-                    width: min(760px, 100%);
-                    background: #fff;
-                    border: 1px solid #dbe3ee;
-                    border-radius: 12px;
-                    padding: 14px;
-                    box-shadow: 0 22px 45px rgba(15, 23, 42, 0.2);
-                }
-                .field {
-                    display: grid;
-                    gap: 6px;
-                }
-                .field span {
-                    font-size: 12px;
-                    font-weight: 700;
-                    color: #475569;
-                }
-                .field input,
-                .field select {
-                    width: 100%;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 8px;
-                    padding: 9px 10px;
-                    outline: none;
-                }
-                .field input:focus,
-                .field select:focus {
-                    border-color: #3b82f6;
-                    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-                }
-                .split {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 10px;
-                }
-                @media (max-width: 900px) {
-                    .controls-grid {
-                        grid-template-columns: 1fr;
-                    }
-                    .col-level,
-                    .col-tons,
-                    .col-buy,
-                    .col-market {
-                        display: none;
-                    }
-                    .responsive-table table {
-                        min-width: 760px;
-                    }
-                    .th-left,
-                    .th-right,
-                    .td-name,
-                    .td-subtle,
-                    .td-right {
-                        font-size: 11px;
-                    }
-                    .td-actions {
-                        min-width: 180px;
-                        white-space: normal;
-                    }
-                    .mini {
-                        padding: 4px 6px;
-                        font-size: 10px;
-                        margin-bottom: 4px;
-                    }
-                    .split {
-                        grid-template-columns: 1fr;
-                    }
-                }
+                .inv-actions { display: flex; gap: 2px; justify-content: flex-end; }
+                .inv-actions .inv-danger:hover:not(:disabled) { color: var(--danger-ink); background: var(--danger-50); }
+                .inv-actions .inv-success { color: var(--success-ink); }
+                .inv-actions .inv-success:hover:not(:disabled) { background: var(--success-50); }
+                .inv-actions .inv-warn { color: var(--warning-ink); }
+                .inv-actions .inv-warn:hover:not(:disabled) { background: var(--warning-50); }
             `}</style>
         </div>
     );

@@ -44,10 +44,20 @@ function ymdEnd(ymd) {
 }
 
 function buildTicketsWhere(req) {
-  const where = { ...scopedWhere(req) };
+  // admin vidi vaganja narudžbe/dobavljača sa svih lokacija (nisu vezani za lokaciju)
+  const allCompaniesForPartner = Boolean(req.query?.contractId || req.query?.supplierId) && req.userRole === 'admin';
+  const where = allCompaniesForPartner ? {} : { ...scopedWhere(req) };
+  const supplierId = req.query?.supplierId;
+  if (supplierId) {
+    where.supplierId = String(supplierId);
+  }
   const type = req.query?.type;
   if (type) {
     where.type = String(type);
+  }
+  const contractId = req.query?.contractId;
+  if (contractId) {
+    where.contractId = String(contractId);
   }
   const df = req.query?.dateFrom;
   const dt = req.query?.dateTo;
@@ -92,6 +102,30 @@ async function voidPosTicketInTx(tx, ticket, req) {
       companyId: ticket.companyId || null,
       movementType: 'adjustment',
       movementPrefix: 'INV-STORNO',
+    });
+  }
+  return tx.weighTicket.update({
+    where: { id: ticket.id },
+    data: { status: 'Storniran' },
+    include: { supplier: true, material: true },
+  });
+}
+
+// prodaja na malo (POS_OUT): storno vraća robu na stanje
+async function voidPosOutTicketInTx(tx, ticket, req) {
+  const net = toNumber(ticket.net, 0);
+  if (net > 0) {
+    const ticketVariantId = await resolveMaterialVariantId(tx, ticket.materialId);
+    await applyInbound(tx, {
+      materialId: ticket.materialId,
+      materialVariantId: ticketVariantId,
+      quantityKg: net,
+      unitPrice: toNumber(ticket.pricePerKg, 0),
+      note: `Storno prodaje na malo ${ticket.code}`,
+      createdBy: req.userId || null,
+      companyId: ticket.companyId || null,
+      movementType: 'adjustment',
+      movementPrefix: 'INV-STORNO-IN',
     });
   }
   return tx.weighTicket.update({
@@ -443,10 +477,12 @@ router.put('/announcements/:id', async (req, res) => {
 });
 
 router.get('/tickets', async (req, res) => {
+  const limit = Number(req.query?.limit);
   const data = await prisma.weighTicket.findMany({
     where: buildTicketsWhere(req),
     include: { supplier: true, material: true },
     orderBy: { date: 'desc' },
+    ...(Number.isFinite(limit) && limit > 0 ? { take: Math.min(Math.floor(limit), 2000) } : {}),
   });
   res.json({ data });
 });
@@ -525,6 +561,9 @@ router.post('/tickets/:id/cancel', async (req, res) => {
   if (ticket.type === 'POS' && isPosCompletedStatus(ticket.status)) {
     return res.status(400).json({ error: 'Direktni otkup je već knjižen. Koristi storno.' });
   }
+  if (ticket.type === 'POS_OUT' && isPosCompletedStatus(ticket.status)) {
+    return res.status(400).json({ error: 'Prodaja na malo je već knjižena. Koristi storno.' });
+  }
   const data = await prisma.weighTicket.update({
     where: { id: req.params.id },
     data: { status: 'Otkazan' },
@@ -577,6 +616,10 @@ router.post('/tickets/:id/void', async (req, res) => {
 
       if (anchor.type === 'POS' && isPosCompletedStatus(anchor.status)) {
         return voidPosTicketInTx(tx, anchor, req);
+      }
+
+      if (anchor.type === 'POS_OUT' && isPosCompletedStatus(anchor.status)) {
+        return voidPosOutTicketInTx(tx, anchor, req);
       }
 
       if (isClosedStatus(anchor.status)) {
@@ -804,6 +847,10 @@ router.post('/tickets/:id/close', async (req, res) => {
         },
         include: { supplier: true, material: true },
       });
+
+      if (ticket.type === 'POS_OUT') {
+        fail('Prodaja na malo se ne zatvara preko vage.');
+      }
 
       const net = toNumber(ticket.net, 0);
       const companyId = ticket.companyId || null;
@@ -1075,6 +1122,116 @@ router.post('/walk-in/batch', async (req, res) => {
   } catch (error) {
     const msg = error?.message || 'Batch walk-in nije uspio.';
     return res.status(400).json({ error: msg });
+  }
+});
+
+/**
+ * Prodaja na malo — kao direktan otkup, ali roba IZLAZI sa stanja.
+ * Kilaža se upisuje ručno (bez vage). Body: { buyer, buyerDocument?, date?, lines: [{ materialId, qtyKg, pricePerKg }] }
+ */
+router.post('/retail-sale/batch', async (req, res) => {
+  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  if (!lines.length) {
+    return res.status(400).json({ error: 'Navedi barem jednu stavku.' });
+  }
+  const buyer = String(req.body?.buyer || '').trim();
+  if (!buyer) {
+    return res.status(400).json({ error: 'Ime kupca je obavezno.' });
+  }
+  const buyerDocument = String(req.body?.buyerDocument || '').trim() || null;
+  const companyId = req.activeCompanyId || req.userCompanyId || null;
+  const saleDate = req.body?.date ? new Date(req.body.date) : new Date();
+  const slipGroupId = randomUUID();
+
+  try {
+    const tickets = await prisma.$transaction(async (tx) => {
+      const createdList = [];
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const materialId = String(line?.materialId || '').trim();
+        const qty = toNumber(line?.qtyKg, 0);
+        if (!materialId) throw new Error('Svaka stavka mora imati materijal.');
+        if (qty <= 0) throw new Error('Količina svake stavke mora biti veća od 0.');
+        const pricePerKg = toNumber(line.pricePerKg, 0);
+        const created = await tx.weighTicket.create({
+          data: {
+            code: uniqueCode('P'),
+            date: saleDate,
+            plate: 'MALOPRODAJA',
+            driver: buyer,
+            sellerDocument: buyerDocument,
+            materialId,
+            gross: qty,
+            tare: 0,
+            kalo: 0,
+            net: qty,
+            pricePerKg,
+            total: qty * pricePerKg,
+            status: 'Completed',
+            type: 'POS_OUT',
+            companyId,
+            slipGroupId,
+            slipSeq: i + 1,
+          },
+          include: { material: true },
+        });
+        const ticketVariantId = await resolveMaterialVariantId(tx, created.materialId);
+        try {
+          await applyOutbound(tx, {
+            materialId: created.materialId,
+            materialVariantId: ticketVariantId,
+            quantityKg: qty,
+            unitPrice: pricePerKg,
+            note: `Prodaja na malo ${created.code} (list ${slipGroupId})`,
+            createdBy: req.userId || null,
+            companyId,
+            movementType: 'sale',
+            movementPrefix: 'INV-OUT',
+          });
+        } catch (error) {
+          if (String(error?.message || '').startsWith('Insufficient stock')) {
+            throw new Error(`Nedovoljno stanja za ${created.material?.code || 'materijal'} (${created.material?.name || ''}).`);
+          }
+          throw error;
+        }
+        createdList.push(created);
+      }
+      return createdList;
+    });
+    return res.status(201).json({
+      data: {
+        slipGroupId,
+        displaySlipNo: tickets[0]?.code || slipGroupId,
+        tickets,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || 'Prodaja na malo nije uspjela.' });
+  }
+});
+
+router.post('/retail-sale/void-group', async (req, res) => {
+  const slipGroupId = String(req.body?.slipGroupId || '').trim();
+  if (!slipGroupId) return res.status(400).json({ error: 'slipGroupId je obavezan.' });
+  try {
+    const data = await prisma.$transaction(async (tx) => {
+      const groupTickets = await tx.weighTicket.findMany({
+        where: { slipGroupId, ...scopedWhere(req), type: 'POS_OUT' },
+        orderBy: [{ slipSeq: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (!groupTickets.length) throw new Error('Nema prodaje za ovaj list.');
+      const results = [];
+      for (const t of groupTickets) {
+        if (isTerminalCancelledOrVoid(t.status)) continue;
+        if (!isPosCompletedStatus(t.status)) throw new Error('Sve stavke moraju biti knjižene prije storna.');
+        results.push(await voidPosOutTicketInTx(tx, t, req));
+      }
+      if (!results.length) throw new Error('Sve stavke su već stornirane.');
+      return { voidedTickets: results, slipGroupId };
+    });
+    return res.json({ data });
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || 'Storno prodaje nije uspio.' });
   }
 });
 

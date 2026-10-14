@@ -1,27 +1,41 @@
 'use client';
 
-export default function Modal({ open, onClose, title, width, children, zIndex = 1200 }) {
+import { useEffect } from 'react';
+import { X } from 'lucide-react';
+
+export default function Modal({ open, onClose, title, subtitle, width, children, zIndex = 3000 }) {
+    useEffect(() => {
+        if (!open) return undefined;
+        const onKey = (event) => {
+            if (event.key === 'Escape') onClose?.();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [open, onClose]);
+
     if (!open) return null;
     const resolvedWidth = typeof width === 'number' ? `${width}px` : (width || '700px');
+
     return (
-        <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '16px', paddingTop: '48px', overflowY: 'auto' }}>
+        <div className="ui-modal-backdrop" style={{ zIndex }} onMouseDown={onClose}>
             <div
-                onClick={e => e.stopPropagation()}
-                style={{
-                    background: '#fff',
-                    border: '1px solid var(--border-color)',
-                    width: `min(${resolvedWidth}, calc(100vw - 24px))`,
-                    maxHeight: 'calc(100vh - 72px)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    boxShadow: '0 4px 24px rgba(0,0,0,0.25)'
-                }}
+                className="ui-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label={typeof title === 'string' ? title : undefined}
+                style={{ width: `min(${resolvedWidth}, calc(100vw - 24px))` }}
+                onMouseDown={(event) => event.stopPropagation()}
             >
-                <div style={{ background: '#0f172a', color: 'white', padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700, fontSize: '13px', textTransform: 'uppercase', flexShrink: 0 }}>
-                    <span>{title}</span>
-                    <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>✕</button>
+                <div className="ui-modal-header">
+                    <div style={{ minWidth: 0 }}>
+                        <div className="ui-modal-title">{title}</div>
+                        {subtitle && <div className="ui-card-subtitle">{subtitle}</div>}
+                    </div>
+                    <button type="button" className="ui-btn ghost icon-only sm" onClick={onClose} aria-label="Zatvori">
+                        <X size={16} />
+                    </button>
                 </div>
-                <div style={{ padding: '14px', overflowY: 'auto', flex: 1 }}>
+                <div className="ui-modal-body">
                     {children}
                 </div>
             </div>
