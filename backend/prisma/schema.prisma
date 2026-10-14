@@ -71,6 +71,7 @@ model Customer {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   salesOrders SalesOrder[]
+  contracts   Contract[]
 }
 
 model Material {
@@ -101,6 +102,7 @@ model Material {
   inventoryStocks InventoryStock[]
   inventoryTransactions InventoryTransaction[]
   xrfAnalyses XrfAnalysis[]
+  contractItems ContractItem[]
 }
 
 model MaterialCategory {
@@ -138,21 +140,44 @@ model MaterialVariant {
 }
 
 model Contract {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  supplierId  String
-  supplier    Supplier @relation(fields: [supplierId], references: [id])
-  materialId  String
-  material    Material @relation(fields: [materialId], references: [id])
-  formula     String
-  qtyTons     Decimal  @db.Decimal(14, 2)
-  period      String
-  status      String
-  startDate   DateTime?
-  endDate     DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  code         String   @unique
+  direction    String   @default("BUY")          // BUY = kupujemo (IN), SELL = prodajemo (OUT)
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id])
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  materialId   String?                            // legacy, ostaje zbog starih ugovora
+  material     Material? @relation(fields: [materialId], references: [id])
+  formula      String?
+  qtyTons      Decimal?  @db.Decimal(14, 2)       // legacy
+  qtyMode      String   @default("PER_MATERIAL")  // PER_MATERIAL | TOTAL
+  totalQtyKg   Decimal?  @db.Decimal(14, 2)       // koristi se kad je qtyMode = TOTAL
+  doneKg       Decimal   @default(0) @db.Decimal(14, 2)
+  tolerance    Decimal?  @db.Decimal(8, 2)
+  paymentTerms String?
+  period       String?
+  status       String
+  startDate    DateTime?
+  endDate      DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
   announcements Announcement[]
+  items        ContractItem[]
+  weighTickets WeighTicket[]
+}
+
+model ContractItem {
+  id         String   @id @default(cuid())
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  qtyKg      Decimal? @db.Decimal(14, 2)          // null ako je qtyMode = TOTAL
+  doneKg     Decimal  @default(0) @db.Decimal(14, 2)
+  pricePerKg Decimal? @db.Decimal(14, 4)
+
+  @@index([contractId])
 }
 
 model Announcement {
@@ -200,7 +225,10 @@ model WeighTicket {
   updatedAt  DateTime  @updatedAt
   lots       Lot[]
   xrfAnalyses XrfAnalysis[]
-
+  contractId String?
+  contract   Contract? @relation(fields: [contractId], references: [id])
+  
+  @@index([contractId])
   @@index([slipGroupId])
 }
 

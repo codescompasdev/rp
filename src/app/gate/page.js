@@ -21,6 +21,118 @@ function isTerminalTicketStatus(status) {
     return value === 'zatvoren' || value === 'otkazan' || value === 'storniran';
 }
 
+const fmtKg = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+function contractPartnerName(contract) {
+    if (!contract) return '';
+    return (contract.direction === 'SELL' ? contract.customer?.name : contract.supplier?.name) || '';
+}
+
+function contractLabel(contract) {
+    const dir = contract.direction === 'SELL' ? 'Prodaja' : 'Nabavka';
+    return `${contract.code} — ${contractPartnerName(contract) || '-'} — ${dir}`;
+}
+
+/* ---------- Zajednički stilovi (veći font, lakše za čitanje) ---------- */
+const FS = {
+    label: '14px',
+    input: '15px',
+    body: '15px',
+    small: '13px',
+    button: '15px',
+    header: '20px',
+    bigNumber: '58px',
+    neto: '30px',
+};
+
+const styles = {
+    label: { fontSize: FS.label, fontWeight: 700, color: '#334155', display: 'block', marginBottom: '5px' },
+    input: {
+        width: '100%', padding: '10px 12px', fontSize: FS.input,
+        border: '1px solid #94a3b8', borderRadius: '6px', background: '#fff',
+    },
+    btn: {
+        padding: '12px 18px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
+        border: '1px solid #94a3b8', background: '#fff', cursor: 'pointer',
+    },
+    btnPrimary: {
+        padding: '12px 18px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
+        border: 'none', background: '#1d4ed8', color: '#fff', cursor: 'pointer',
+    },
+    btnGreen: {
+        padding: '14px 20px', fontSize: '17px', fontWeight: 800, borderRadius: '6px',
+        border: 'none', background: '#15803d', color: '#fff', cursor: 'pointer',
+    },
+    btnDanger: {
+        padding: '10px 16px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
+        border: 'none', background: '#b91c1c', color: '#fff', cursor: 'pointer',
+    },
+    btnAmber: {
+        padding: '10px 16px', fontSize: FS.button, fontWeight: 700, borderRadius: '6px',
+        border: 'none', background: '#b45309', color: '#fff', cursor: 'pointer',
+    },
+};
+
+/* ---------- Prikaz stanja narudžbe (koliko je ostalo primiti / isporučiti) ---------- */
+function ContractInfo({ contract, materialId, netKg = 0 }) {
+    if (!contract) return null;
+    const items = contract.items || [];
+    const isTotal = contract.qtyMode === 'TOTAL';
+    const isSell = contract.direction === 'SELL';
+    const tol = Number(contract.tolerance || 0);
+
+    const cur = items.find((i) => i.materialId === materialId);
+    const curPlanned = cur && cur.qtyKg !== null && cur.qtyKg !== undefined ? Number(cur.qtyKg) : null;
+    const curRemaining = curPlanned !== null ? curPlanned - Number(cur.doneKg || 0) : null;
+
+    const totalPlanned = isTotal ? Number(contract.totalQtyKg || 0) : null;
+    const totalRemaining = isTotal ? totalPlanned - Number(contract.doneKg || 0) : null;
+
+    const limitPlanned = isTotal ? totalPlanned : curPlanned;
+    const limitRemaining = isTotal ? totalRemaining : curRemaining;
+    const allowed = limitPlanned !== null && limitRemaining !== null ? limitRemaining + (limitPlanned * tol) / 100 : null;
+    const over = allowed !== null && Number(netKg) > allowed;
+    const verb = isSell ? 'za isporučiti' : 'za primiti';
+
+    return (
+        <div style={{ background: '#1e293b', border: `1px solid ${over ? '#f59e0b' : '#334155'}`, borderRadius: '8px', padding: '12px 16px', fontSize: FS.small }}>
+            <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: FS.body, marginBottom: '6px' }}>
+                Narudžba {contract.code} — {isSell ? 'PRODAJA' : 'NABAVKA'} — {contractPartnerName(contract) || '-'}
+            </div>
+            {isTotal ? (
+                <div style={{ color: '#cbd5e1' }}>
+                    Ukupno: <b>{fmtKg(totalPlanned)} kg</b> · Ispunjeno: <b>{fmtKg(contract.doneKg)} kg</b> ·{' '}
+                    <b style={{ color: '#10b981' }}>Preostalo {verb}: {fmtKg(Math.max(0, totalRemaining))} kg</b>
+                </div>
+            ) : (
+                <div style={{ display: 'grid', gap: '2px', color: '#cbd5e1' }}>
+                    {items.map((i) => {
+                        const rem = i.qtyKg !== null && i.qtyKg !== undefined ? Number(i.qtyKg) - Number(i.doneKg || 0) : null;
+                        const active = i.materialId === materialId;
+                        return (
+                            <div key={i.id} style={{ fontWeight: active ? 800 : 400, color: active ? '#fff' : '#cbd5e1' }}>
+                                {active ? '▶ ' : ''}{i.material?.code || '-'} — {i.material?.name || ''}: {fmtKg(i.doneKg)} / {fmtKg(i.qtyKg)} kg
+                                {rem !== null && <span style={{ color: '#10b981' }}> (preostalo {fmtKg(Math.max(0, rem))} kg)</span>}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            {tol > 0 && <div style={{ color: '#94a3b8', marginTop: '4px' }}>Tolerancija: {tol}%</div>}
+            {over && (
+                <div style={{ marginTop: '6px', color: '#fde68a', fontWeight: 700 }}>
+                    Upozorenje: neto ({fmtKg(netKg)} kg) prelazi preostalu količinu uz toleranciju ({fmtKg(allowed)} kg).
+                </div>
+            )}
+            {!isTotal && !cur && materialId && (
+                <div style={{ marginTop: '6px', color: '#fde68a', fontWeight: 700 }}>
+                    Odabrani materijal nije na ovoj narudžbi.
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function GatePage() {
     const authUser = getAuthUser();
     const [role, setRole] = useState('worker');
@@ -34,17 +146,15 @@ export default function GatePage() {
         message: 'Nema signala',
         lastUpdatedAt: null,
     });
-    const [newTicketOpen, setNewTicketOpen] = useState(false);
+
+    // 'ticket' = gledamo/radimo na postojećem vaganju, 'new' = pravimo novo
+    const [panelMode, setPanelMode] = useState('ticket');
+    const [listModalOpen, setListModalOpen] = useState(false);
+
     const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
     const [materialPickerTarget, setMaterialPickerTarget] = useState('newTicket');
     const [selectedMaterial, setSelectedMaterial] = useState(null);
     const [createPartnerOpen, setCreatePartnerOpen] = useState(false);
-    const [inspectionMaterialPickerOpen, setInspectionMaterialPickerOpen] = useState(false);
-    const [inspectionMaterial, setInspectionMaterial] = useState(null);
-    const [firstWeighOpen, setFirstWeighOpen] = useState(false);
-    const [inspectionOpen, setInspectionOpen] = useState(false);
-    const [xrfOpen, setXrfOpen] = useState(false);
-    const [secondWeighOpen, setSecondWeighOpen] = useState(false);
     const [completeOpen, setCompleteOpen] = useState(false);
     const [nextOutboundMaterialId, setNextOutboundMaterialId] = useState('');
     const [tickets, setTickets] = useState([]);
@@ -60,11 +170,12 @@ export default function GatePage() {
     const [selectedTicketId, setSelectedTicketId] = useState('');
     const [listDateFrom, setListDateFrom] = useState(() => localYmd());
     const [listDateTo, setListDateTo] = useState(() => localYmd());
-    const [ticketDraft, setTicketDraft] = useState({ plate: '', driver: '', pricePerKg: '', supplierId: '', materialId: '', gross: '', tare: '' });
+    const [ticketDraft, setTicketDraft] = useState({ plate: '', driver: '', pricePerKg: '', supplierId: '', materialId: '', contractId: '', gross: '', tare: '' });
     const [partnerCreateTarget, setPartnerCreateTarget] = useState('newTicket');
     const [gateError, setGateError] = useState('');
     const [gateInfo, setGateInfo] = useState('');
     const [manualWeightOverride, setManualWeightOverride] = useState(false);
+    const [packagingOpen, setPackagingOpen] = useState(false);
     const [selectedAnnouncementQuery, setSelectedAnnouncementQuery] = useState('');
     const [newSupplierQuery, setNewSupplierQuery] = useState('');
     const [detailSupplierQuery, setDetailSupplierQuery] = useState('');
@@ -112,6 +223,7 @@ export default function GatePage() {
             const preferred = ticketData.find((ticket) => !isTerminalTicketStatus(ticket?.status));
             return preferred?.id || ticketData[0]?.id || '';
         });
+        return ticketData;
     }, [listDateFrom, listDateTo]);
 
     const refreshSuppliers = async () => {
@@ -130,6 +242,11 @@ export default function GatePage() {
     const refreshMaterials = async () => {
         const res = await api.get('/materials');
         setMaterials(normalizeApiList(res));
+    };
+
+    const refreshContracts = async () => {
+        const res = await api.get('/sourcing/contracts');
+        setContracts(normalizeApiList(res));
     };
 
     const handleCreatePartner = async () => {
@@ -222,6 +339,7 @@ export default function GatePage() {
             const payload = {
                 supplierId: newAnnouncementForm.supplierId,
                 materialId: backendMaterial?.id || undefined,
+                contractId: newTicketForm.contractId || undefined,
                 expectedKg,
                 expectedDate: newAnnouncementForm.expectedDate || new Date().toISOString(),
                 truck: String(newAnnouncementForm.truck || '').trim() || null,
@@ -266,6 +384,7 @@ export default function GatePage() {
             ? packagingPrintLines.map((row) => `${row.type || 'Ambalaža'}: ${Number(row.kg || 0).toLocaleString()} kg`).join(' | ')
             : '-';
         const announcementCode = announcements.find((item) => item.id === selectedAnnouncementId)?.code || '-';
+        const orderCode = contracts.find((c) => c.id === ticket.contractId)?.code || '-';
         const transactionType = ticket.type === 'OUT' ? 'PRODAJA / IZLAZ' : 'OTKUP / ULAZ';
         const now = new Date();
         const vagarName = authUser?.name || inspectorName || '-';
@@ -273,6 +392,47 @@ export default function GatePage() {
         const formatKg = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
         const printWindow = targetWindow || window.open('', '_blank', 'width=900,height=700');
         if (!printWindow) return;
+
+        const sheet = (copyLabel) => `
+                <div class="sheet">
+                <div class="company">MILKUS d.o.o.</div>
+                <div class="address">Ljubogosta b.b. ${htmlEscape(authUser?.company?.name || 'PALE')}</div>
+                <div class="top-row">
+                  <div>Vagarski list br: ${htmlEscape(ticket.code || '-')}</div>
+                  <div class="copy-chip">${htmlEscape(copyLabel)}</div>
+                </div>
+                <div class="line"></div>
+                <div class="grid2">
+                  <div class="field"><span class="label">Artikl:</span><span class="value">${htmlEscape(ticket.material?.name || ticket.material?.code || '-')}</span></div>
+                  <div class="field"><span class="label">Vozač:</span><span class="value">${htmlEscape(driverName)}</span></div>
+                  <div class="field"><span class="label">Komitent:</span><span class="value">${htmlEscape(ticket.supplier?.name || '-')}</span></div>
+                  <div class="field"><span class="label">Registarski broj:</span><span class="value">${htmlEscape(ticket.plate || '-')}</span></div>
+                </div>
+                <div class="field" style="grid-template-columns: 200px 1fr;">
+                  <span class="label">Broj ličnog dokumenta:</span><span class="value">-</span>
+                </div>
+                <div class="blocks">
+                  <div class="block">
+                    <div class="block-title">Merenje:</div>
+                    <div class="measure-row"><span class="measure-label">Pun:</span><span class="measure-value">${htmlEscape(formatKg(ticket.gross))}</span><span class="measure-unit">kg</span></div>
+                    <div class="measure-row"><span class="measure-label">Prazan:</span><span class="measure-value">${htmlEscape(formatKg(ticket.tare))}</span><span class="measure-unit">kg</span></div>
+                    <div class="measure-row"><span class="measure-label">Neto:</span><span class="measure-value">${htmlEscape(formatKg(ticket.net))}</span><span class="measure-unit">kg</span></div>
+                  </div>
+                  <div class="block">
+                    <div class="block-title">Merenje je izvršeno:</div>
+                    <div class="date-row"><span>Datum:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleDateString())}</span></div>
+                    <div class="date-row"><span>Vreme:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleTimeString())}</span></div>
+                    <div style="font-size: 11px; margin-top: 14px; color:#555;">Tip: ${htmlEscape(transactionType)} | Najava: ${htmlEscape(announcementCode)} | Narudžba: ${htmlEscape(orderCode)}</div>
+                  </div>
+                </div>
+                <div class="notes"><span class="label">Ambalaža/Odbitak:</span> ${htmlEscape(packagingPrintText)}</div>
+                <div class="bottom">
+                  <div><span class="label">Vagar:</span> <span class="signature">${htmlEscape(vagarName)}</span></div>
+                  <div><span class="label">Primio/Predao:</span> <span class="signature">${htmlEscape(inspectorName)}</span></div>
+                </div>
+                <div class="foot-time">${htmlEscape(now.toLocaleDateString())} ${htmlEscape(now.toLocaleTimeString())}</div>
+                </div>`;
+
         try {
             printWindow.document.open();
             printWindow.document.write(`
@@ -311,82 +471,8 @@ export default function GatePage() {
               </head>
               <body>
                 <div class="page">
-                <div class="sheet">
-                <div class="company">MILKUS d.o.o.</div>
-                <div class="address">Ljubogosta b.b. ${htmlEscape(authUser?.company?.name || 'PALE')}</div>
-                <div class="top-row">
-                  <div>Vagarski list br: ${htmlEscape(ticket.code || '-')}</div>
-                  <div class="copy-chip">PRIMJERAK 1 / KOMITENT</div>
-                </div>
-                <div class="line"></div>
-                <div class="grid2">
-                  <div class="field"><span class="label">Artikl:</span><span class="value">${htmlEscape(ticket.material?.name || ticket.material?.code || '-')}</span></div>
-                  <div class="field"><span class="label">Vozač:</span><span class="value">${htmlEscape(driverName)}</span></div>
-                  <div class="field"><span class="label">Komitent:</span><span class="value">${htmlEscape(ticket.supplier?.name || '-')}</span></div>
-                  <div class="field"><span class="label">Registarski broj:</span><span class="value">${htmlEscape(ticket.plate || '-')}</span></div>
-                </div>
-                <div class="field" style="grid-template-columns: 200px 1fr;">
-                  <span class="label">Broj ličnog dokumenta:</span><span class="value">-</span>
-                </div>
-                <div class="blocks">
-                  <div class="block">
-                    <div class="block-title">Merenje:</div>
-                    <div class="measure-row"><span class="measure-label">Pun:</span><span class="measure-value">${htmlEscape(formatKg(ticket.gross))}</span><span class="measure-unit">kg</span></div>
-                    <div class="measure-row"><span class="measure-label">Prazan:</span><span class="measure-value">${htmlEscape(formatKg(ticket.tare))}</span><span class="measure-unit">kg</span></div>
-                    <div class="measure-row"><span class="measure-label">Neto:</span><span class="measure-value">${htmlEscape(formatKg(ticket.net))}</span><span class="measure-unit">kg</span></div>
-                  </div>
-                  <div class="block">
-                    <div class="block-title">Merenje je izvršeno:</div>
-                    <div class="date-row"><span>Datum:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleDateString())}</span></div>
-                    <div class="date-row"><span>Vreme:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleTimeString())}</span></div>
-                    <div style="font-size: 12px; margin-top: 20px; color:#555;">Tip: ${htmlEscape(transactionType)} | Najava: ${htmlEscape(announcementCode)}</div>
-                  </div>
-                </div>
-                <div class="notes"><span class="label">Ambalaža/Odbitak:</span> ${htmlEscape(packagingPrintText)}</div>
-                <div class="bottom">
-                  <div><span class="label">Vagar:</span> <span class="signature">${htmlEscape(vagarName)}</span></div>
-                  <div><span class="label">Primio/Predao:</span> <span class="signature">${htmlEscape(inspectorName)}</span></div>
-                </div>
-                <div class="foot-time">${htmlEscape(now.toLocaleDateString())} ${htmlEscape(now.toLocaleTimeString())}</div>
-                </div>
-                <div class="sheet">
-                <div class="company">MILKUS d.o.o.</div>
-                <div class="address">Ljubogosta b.b. ${htmlEscape(authUser?.company?.name || 'PALE')}</div>
-                <div class="top-row">
-                  <div>Vagarski list br: ${htmlEscape(ticket.code || '-')}</div>
-                  <div class="copy-chip">PRIMJERAK 2 / ARHIVA</div>
-                </div>
-                <div class="line"></div>
-                <div class="grid2">
-                  <div class="field"><span class="label">Artikl:</span><span class="value">${htmlEscape(ticket.material?.name || ticket.material?.code || '-')}</span></div>
-                  <div class="field"><span class="label">Vozač:</span><span class="value">${htmlEscape(driverName)}</span></div>
-                  <div class="field"><span class="label">Komitent:</span><span class="value">${htmlEscape(ticket.supplier?.name || '-')}</span></div>
-                  <div class="field"><span class="label">Registarski broj:</span><span class="value">${htmlEscape(ticket.plate || '-')}</span></div>
-                </div>
-                <div class="field" style="grid-template-columns: 200px 1fr;">
-                  <span class="label">Broj ličnog dokumenta:</span><span class="value">-</span>
-                </div>
-                <div class="blocks">
-                  <div class="block">
-                    <div class="block-title">Merenje:</div>
-                    <div class="measure-row"><span class="measure-label">Pun:</span><span class="measure-value">${htmlEscape(formatKg(ticket.gross))}</span><span class="measure-unit">kg</span></div>
-                    <div class="measure-row"><span class="measure-label">Prazan:</span><span class="measure-value">${htmlEscape(formatKg(ticket.tare))}</span><span class="measure-unit">kg</span></div>
-                    <div class="measure-row"><span class="measure-label">Neto:</span><span class="measure-value">${htmlEscape(formatKg(ticket.net))}</span><span class="measure-unit">kg</span></div>
-                  </div>
-                  <div class="block">
-                    <div class="block-title">Merenje je izvršeno:</div>
-                    <div class="date-row"><span>Datum:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleDateString())}</span></div>
-                    <div class="date-row"><span>Vreme:</span><span style="text-align:right;">${htmlEscape(measureDate.toLocaleTimeString())}</span></div>
-                    <div style="font-size: 10px; margin-top: 12px; color:#475569;">Tip: ${htmlEscape(transactionType)} | Najava: ${htmlEscape(announcementCode)}</div>
-                  </div>
-                </div>
-                <div class="notes"><span class="label">Ambalaža/Odbitak:</span> ${htmlEscape(packagingPrintText)}</div>
-                <div class="bottom">
-                  <div><span class="label">Vagar:</span> <span class="signature">${htmlEscape(vagarName)}</span></div>
-                  <div><span class="label">Primio/Predao:</span> <span class="signature">${htmlEscape(inspectorName)}</span></div>
-                </div>
-                <div class="foot-time">${htmlEscape(now.toLocaleDateString())} ${htmlEscape(now.toLocaleTimeString())}</div>
-                </div>
+                ${sheet('PRIMJERAK 1 / KOMITENT')}
+                ${sheet('PRIMJERAK 2 / ARHIVA')}
                 </div>
               </body>
             </html>
@@ -431,7 +517,7 @@ export default function GatePage() {
             setInspectionWorkers([]);
             setInspectionWorkerId('');
         });
-        api.get('/sourcing/contracts').then((res) => setContracts(normalizeApiList(res))).catch(() => setContracts([]));
+        refreshContracts().catch(() => setContracts([]));
         refreshMaterials().catch(() => setMaterials([]));
         if (typeof window !== 'undefined') {
             const onResize = () => {
@@ -446,7 +532,9 @@ export default function GatePage() {
     }, []);
 
     useEffect(() => {
-        refreshTickets().catch(() => setTickets([]));
+        refreshTickets().then((data) => {
+            if (!data.length) setPanelMode('new');
+        }).catch(() => setTickets([]));
     }, [refreshTickets]);
 
     useEffect(() => {
@@ -524,6 +612,10 @@ export default function GatePage() {
         () => tickets.find((ticket) => ticket.id === selectedTicketId) || tickets[0] || null,
         [tickets, selectedTicketId]
     );
+    const activeTicketIndex = useMemo(
+        () => tickets.findIndex((ticket) => ticket.id === (activeTicket?.id || selectedTicketId)),
+        [tickets, activeTicket, selectedTicketId]
+    );
     const tareWeight = useMemo(() => {
         const live = Number(liveWeight);
         if (Number.isFinite(live) && live > 0) {
@@ -579,7 +671,11 @@ export default function GatePage() {
         if (scaleConfig.mode === 'manual') return true;
         return Boolean(scaleConfig.allowManualEntry) && !scaleSignal.signalAvailable;
     }, [scaleConfig, scaleSignal.signalAvailable]);
-    const isOutboundFlow = useMemo(() => activeTicket?.type === 'OUT', [activeTicket]);
+    const isNewMode = panelMode === 'new';
+    const isOutboundFlow = useMemo(() => {
+        if (panelMode === 'new') return newTicketForm.transactionType === 'OUT';
+        return activeTicket?.type === 'OUT';
+    }, [panelMode, newTicketForm.transactionType, activeTicket]);
     const totalPackagingKg = useMemo(
         () => packagingRows.reduce((sum, row) => sum + Number(row.kg || 0), 0),
         [packagingRows]
@@ -594,14 +690,72 @@ export default function GatePage() {
         [packagingRows]
     );
 
+    /* ---------- Narudžbe: trenutno odabrana, opcije, materijal ---------- */
+    const currentSupplierId = isNewMode ? newTicketForm.supplierId : ticketDraft.supplierId;
+    const selectedContractId = isNewMode ? newTicketForm.contractId : ticketDraft.contractId;
+    const currentMaterialId = isNewMode
+        ? (resolveBackendMaterial(materials, selectedMaterial)?.id || selectedMaterial?.id || '')
+        : ticketDraft.materialId;
+    const selectedContract = useMemo(
+        () => contracts.find((c) => c.id === selectedContractId) || null,
+        [contracts, selectedContractId]
+    );
+    const contractOptions = useMemo(() => {
+        const wantedDirection = isOutboundFlow ? 'SELL' : 'BUY';
+        const open = contracts.filter((c) => (c.direction || 'BUY') === wantedDirection && c.status === 'Aktivan');
+        const supplierName = String(suppliers.find((s) => s.id === currentSupplierId)?.name || '').trim().toLowerCase();
+        const matches = supplierName
+            ? open.filter((c) => contractPartnerName(c).trim().toLowerCase() === supplierName)
+            : [];
+        const list = matches.length ? matches : open;
+        if (selectedContract && !list.some((c) => c.id === selectedContract.id)) {
+            return [selectedContract, ...list];
+        }
+        return list;
+    }, [contracts, isOutboundFlow, suppliers, currentSupplierId, selectedContract]);
+
+    const handleContractChange = (contractId) => {
+        const contract = contracts.find((c) => c.id === contractId) || null;
+        const items = contract?.items || [];
+        const singleMaterial = items.length === 1 ? materials.find((m) => m.id === items[0].materialId) : null;
+        const partnerName = contractPartnerName(contract).trim().toLowerCase();
+        const partnerSupplier = partnerName
+            ? suppliers.find((s) => String(s.name || '').trim().toLowerCase() === partnerName)
+            : null;
+        if (isNewMode) {
+            setNewTicketForm((prev) => ({
+                ...prev,
+                contractId,
+                supplierId: partnerSupplier?.id || prev.supplierId,
+            }));
+            if (singleMaterial) setSelectedMaterial(singleMaterial);
+        } else {
+            setTicketDraft((prev) => ({
+                ...prev,
+                contractId,
+                supplierId: partnerSupplier?.id || prev.supplierId,
+                materialId: singleMaterial?.id || prev.materialId,
+            }));
+        }
+    };
+
+    const handleContractMaterialChange = (materialId) => {
+        if (isNewMode) {
+            setSelectedMaterial(materials.find((m) => m.id === materialId) || null);
+        } else {
+            setTicketDraft((prev) => ({ ...prev, materialId }));
+        }
+    };
+
     useEffect(() => {
-        if (!activeTicket) return;
+        if (panelMode !== 'ticket' || !activeTicket) return;
         setTicketDraft({
             plate: activeTicket.plate || '',
             driver: activeTicket.driver || '',
             pricePerKg: String(activeTicket.pricePerKg || 0),
             supplierId: activeTicket.supplierId || activeTicket.supplier?.id || '',
             materialId: activeTicket.materialId || activeTicket.material?.id || '',
+            contractId: activeTicket.contractId || '',
             gross: String(Number(activeTicket.gross || 0)),
             tare: String(Number(activeTicket.tare || 0)),
         });
@@ -615,7 +769,7 @@ export default function GatePage() {
         } else {
             setPackagingRows([{ id: `pkg-${Date.now()}`, type: 'Palete', kg: '' }]);
         }
-    }, [activeTicket?.id]);
+    }, [activeTicket?.id, panelMode]);
     useEffect(() => {
         const selected = supplierLookupOptions.find((item) => item.id === newTicketForm.supplierId);
         setNewSupplierQuery(selected?.label || '');
@@ -633,6 +787,37 @@ export default function GatePage() {
         setSelectedAnnouncementQuery(selected?.label || '');
     }, [selectedAnnouncementId, announcementLookupOptions]);
 
+    /* ---------- Navigacija: prethodno / novo / sljedeće ---------- */
+    const startNewTicket = () => {
+        setPanelMode('new');
+        setSelectedMaterial(null);
+        setSelectedAnnouncementId('');
+        setNewTicketForm((prev) => ({ ...prev, plate: '', driver: '', contractId: '', transactionType: 'IN' }));
+        setGateError('');
+        setGateInfo('');
+    };
+
+    const goToTicket = (id) => {
+        if (!id) return;
+        setSelectedTicketId(id);
+        setPanelMode('ticket');
+        setGateError('');
+        setGateInfo('');
+    };
+
+    const goPrevTicket = () => {
+        if (activeTicketIndex > 0) {
+            goToTicket(tickets[activeTicketIndex - 1].id);
+        } else if (panelMode === 'new' && tickets.length) {
+            goToTicket(tickets[tickets.length - 1].id);
+        }
+    };
+    const goNextTicket = () => {
+        if (activeTicketIndex >= 0 && activeTicketIndex < tickets.length - 1) {
+            goToTicket(tickets[activeTicketIndex + 1].id);
+        }
+    };
+
     const handleCreateTicket = async () => {
         const backendMaterial = resolveBackendMaterial(materials, selectedMaterial);
         try {
@@ -642,6 +827,7 @@ export default function GatePage() {
                 driver: newTicketForm.driver || null,
                 supplierId: newTicketForm.supplierId || null,
                 materialId: backendMaterial?.id || undefined,
+                contractId: newTicketForm.contractId || null,
                 gross: 0,
                 tare: 0,
                 kalo: 0,
@@ -651,19 +837,22 @@ export default function GatePage() {
                 status: 'Otvoren',
                 type: newTicketForm.transactionType,
             };
-            await api.post('/gate/tickets', payload);
+            const res = await api.post('/gate/tickets', payload);
+            const createdTicket = res?.data?.data;
             await refreshTickets();
             setGateError('');
-            setGateInfo('Novi prijem je uspješno kreiran.');
-            setNewTicketOpen(false);
+            setGateInfo(backendMaterial?.id
+                ? 'Novo vaganje je kreirano.'
+                : 'Novo vaganje je kreirano sa privremenim materijalom. Potvrdi tačan materijal prije zatvaranja.');
             setSelectedMaterial(null);
             setSelectedAnnouncementId('');
-            setNewTicketForm((prev) => ({ ...prev, plate: '', driver: '' }));
-            if (!backendMaterial?.id) {
-                setGateInfo('Novi prijem je kreiran sa privremenim materijalom. Potvrdi tačan materijal prije zatvaranja.');
+            setNewTicketForm((prev) => ({ ...prev, plate: '', driver: '', contractId: '' }));
+            if (createdTicket?.id) {
+                setSelectedTicketId(createdTicket.id);
             }
-        } catch {
-            setGateError('Kreiranje tiketa nije uspjelo. Provjeri podatke i pokušaj ponovo.');
+            setPanelMode('ticket');
+        } catch (error) {
+            setGateError(error?.response?.data?.error || 'Kreiranje vaganja nije uspjelo. Provjeri podatke i pokušaj ponovo.');
         }
     };
 
@@ -681,29 +870,10 @@ export default function GatePage() {
                 await api.post(`/gate/tickets/${activeTicket.id}/first-weigh`, { gross: weight });
             }
             await refreshTickets();
-            setFirstWeighOpen(false);
             setGateInfo('Prvo vaganje je sačuvano.');
             setGateError('');
         } catch (error) {
             setGateError(error?.response?.data?.error || 'Neuspješno čuvanje prvog vaganja.');
-        }
-    };
-
-    const handleInspection = async () => {
-        if (!activeTicket?.id) return;
-        const backendMaterial = inspectionMaterial ? resolveBackendMaterial(materials, inspectionMaterial) : null;
-        try {
-            await api.post(`/gate/tickets/${activeTicket.id}/inspection`, {
-                materialId: backendMaterial?.id || undefined,
-                inspectorId: inspectionWorkerId || undefined,
-                inspectorName: getInspectionWorkerName() || undefined,
-            });
-            await refreshTickets();
-            setInspectionOpen(false);
-            setGateInfo('Inspekcija je sačuvana.');
-            setGateError('');
-        } catch {
-            setGateError('Neuspješno čuvanje inspekcije.');
         }
     };
 
@@ -743,6 +913,7 @@ export default function GatePage() {
                 pricePerKg,
                 supplierId: ticketDraft.supplierId || null,
                 materialId: ticketDraft.materialId || undefined,
+                contractId: ticketDraft.contractId || null,
                 gross,
                 tare,
                 net,
@@ -771,12 +942,13 @@ export default function GatePage() {
 
     const handleGateVoidTicket = async () => {
         if (!activeTicket?.id) return;
-        if (!window.confirm('STORNO: knjiženje vaganja biće poništeno na skladištu. Nastaviti?')) return;
+        if (!window.confirm('STORNO: knjiženje vaganja biće poništeno na skladištu i na narudžbi. Nastaviti?')) return;
         try {
             await api.post(`/gate/tickets/${activeTicket.id}/void`, {});
             setGateInfo('Vaganje je stornirano.');
             setGateError('');
             await refreshTickets();
+            await refreshContracts().catch(() => null);
         } catch (error) {
             setGateError(error?.response?.data?.error || 'Storno nije uspjelo.');
         }
@@ -811,7 +983,6 @@ export default function GatePage() {
             }
             await api.post(`/gate/tickets/${activeTicket.id}/second-weigh`, payload);
             await refreshTickets();
-            setSecondWeighOpen(false);
             setPackagingRows([{ id: `pkg-${Date.now()}`, type: 'Palete', kg: '' }]);
             setGateInfo('Drugo vaganje je sačuvano.');
             setGateError('');
@@ -853,11 +1024,14 @@ export default function GatePage() {
                 inspectorId: inspectionWorkerId || undefined,
                 inspectorName: getInspectionWorkerName() || undefined,
                 announcementId: selectedAnnouncementId || undefined,
+                contractId: activeTicket?.contractId || undefined,
             });
             const closedTicket = closeRes?.data?.data || activeTicket;
             if (printWeighSlip) {
                 printWeighSlipDocument(closedTicket, preOpenedPrintWindow, { driverName: closeDriverName });
             }
+            // narudžba je ažurirana na backendu: povuci svježe stanje
+            await refreshContracts().catch(() => null);
             if (continueOutbound && activeTicket?.type === 'OUT') {
                 const nextRes = await api.post('/gate/tickets', {
                     date: new Date().toISOString(),
@@ -865,6 +1039,7 @@ export default function GatePage() {
                     driver: closeDriverName || activeTicket?.driver || null,
                     supplierId: activeTicket?.supplierId || activeTicket?.supplier?.id || null,
                     materialId: nextMaterialForContinue,
+                    contractId: activeTicket?.contractId || null,
                     gross: 0,
                     tare: Number(closedTicket?.gross || activeTicket?.gross || 0),
                     kalo: 0,
@@ -875,13 +1050,13 @@ export default function GatePage() {
                     type: 'OUT',
                 });
                 const nextTicket = nextRes?.data?.data;
-            await refreshTickets();
+                await refreshTickets();
                 if (nextTicket?.id) {
                     setSelectedTicketId(nextTicket.id);
                 }
-            setCompleteOpen(false);
+                setCompleteOpen(false);
                 setCloseDriverName('');
-                setGateInfo('Tiket je zatvoren i otvoreno je novo OUT vaganje. Nastavi sa brutom.');
+                setGateInfo('Vaganje je zatvoreno i otvoreno je novo OUT vaganje. Nastavi sa brutom.');
                 setGateError('');
                 return;
             }
@@ -889,14 +1064,14 @@ export default function GatePage() {
             setCompleteOpen(false);
             setCloseDriverName('');
             const isOutbound = activeTicket?.type === 'OUT';
-            setGateInfo(isOutbound ? 'Tiket je zatvoren i stanje je umanjeno.' : 'Tiket je zatvoren i lot je kreiran.');
+            setGateInfo(isOutbound ? 'Vaganje je zatvoreno i stanje je umanjeno.' : 'Vaganje je zatvoreno i lot je kreiran.');
             setGateError('');
         } catch (error) {
             if (preOpenedPrintWindow && !preOpenedPrintWindow.closed) {
                 preOpenedPrintWindow.close();
             }
             const message = error?.response?.data?.error;
-            setGateError(message || 'Zatvaranje tiketa nije uspjelo.');
+            setGateError(message || 'Zatvaranje vaganja nije uspjelo.');
         } finally {
             setCloseSubmitting(false);
         }
@@ -908,265 +1083,216 @@ export default function GatePage() {
     const isTicketVoidOrCancelled = ['otkazan', 'storniran'].includes(String(activeTicket?.status || '').toLowerCase());
     const canGateCancel = activeTicket?.id && !isTicketClosed && !isTicketVoidOrCancelled;
     const canGateVoid = activeTicket?.id && isTicketClosed && !isTicketVoidOrCancelled && (activeTicket.type === 'IN' || activeTicket.type === 'OUT');
+    const displayType = isNewMode ? newTicketForm.transactionType : (activeTicket?.type || 'IN');
+    const now = new Date();
+    const contractLocked = !isNewMode && (isTicketClosed || isTicketVoidOrCancelled);
+    const contractItems = selectedContract?.items || [];
 
-    if (true) {
-        return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
-                <div className="scada-panel" style={{ width: '100%', background: '#0f172a', color: '#e2e8f0', minHeight: 210 }}>
-                    <div className="scada-header" style={{ background: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between' }}>
-                        <span>VAGA - LIVE</span>
-                        <button onClick={() => setNewTicketOpen(true)} style={{ padding: '8px 16px', background: '#10b981', border: 'none', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>+ NOVI PRIJEM</button>
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%', fontSize: FS.body }}>
+
+            {/* ---------- Gornja traka: lista + navigacija ---------- */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between' }}>
+                <button type="button" style={styles.btn} onClick={() => setListModalOpen(true)}>
+                    📋 Lista vaganja
+                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                        type="button"
+                        style={{ ...styles.btn, opacity: (isNewMode ? !tickets.length : activeTicketIndex <= 0) ? 0.5 : 1 }}
+                        onClick={goPrevTicket}
+                        disabled={isNewMode ? !tickets.length : activeTicketIndex <= 0}
+                    >
+                        ◀ Prethodno
+                    </button>
+                    <button type="button" style={styles.btnGreen} onClick={startNewTicket}>
+                        + Novo vaganje
+                    </button>
+                    <button
+                        type="button"
+                        style={{ ...styles.btn, opacity: (isNewMode || activeTicketIndex >= tickets.length - 1) ? 0.5 : 1 }}
+                        onClick={goNextTicket}
+                        disabled={isNewMode || activeTicketIndex >= tickets.length - 1}
+                    >
+                        Sljedeće ▶
+                    </button>
+                </div>
+            </div>
+
+            {gateInfo && <div style={{ padding: '10px 14px', background: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', fontSize: FS.body, borderRadius: '6px' }}>{gateInfo}</div>}
+            {gateError && <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #ef4444', color: '#991b1b', fontSize: FS.body, borderRadius: '6px' }}>{gateError}</div>}
+
+            {/* ---------- Glavni panel (vagarski list) ---------- */}
+            <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #334155', borderRadius: '10px', background: '#0f172a', color: '#e2e8f0' }}>
+                <div style={{
+                    display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 18px', background: '#1e293b', borderBottom: '1px solid #334155', borderRadius: '10px 10px 0 0',
+                }}>
+                    <div style={{ display: 'flex', gap: '22px', flexWrap: 'wrap', fontSize: FS.body }}>
+                        <div>R.br: <b>{isNewMode ? 'NOVO' : (activeTicket?.code || '-')}</b></div>
+                        <div>Vagar: <b>{authUser?.name || '-'}</b></div>
+                        <div>Datum: <b>{now.toLocaleDateString()}</b></div>
+                        <div>Vrijeme: <b>{now.toLocaleTimeString()}</b></div>
                     </div>
-                    <div style={{ padding: '18px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr auto', gap: '12px', alignItems: 'center' }}>
-                        <div>
-                            <div style={{ color: scaleSignal.signalAvailable ? '#10b981' : '#f59e0b', fontSize: '11px', marginBottom: '6px' }}>{scaleSignal.message}</div>
-                            <div className="scada-readout" style={{ color: '#10b981', fontSize: isMobile ? '42px' : '72px', fontWeight: 800 }}>{weightText}</div>
-                            <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px', alignItems: 'center', maxWidth: 540 }}>
-                                <input
-                                    type="number"
-                                    value={liveWeight}
-                                    onChange={(event) => {
-                                        setManualWeightOverride(true);
-                                        setLiveWeight(Number(event.target.value || 0));
-                                    }}
-                                    style={{ padding: '8px', background: '#0b1220', color: '#e2e8f0', border: '1px solid #334155' }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setManualWeightOverride((prev) => !prev)}
-                                    style={{
-                                        padding: '8px 10px',
-                                        border: '1px solid #334155',
-                                        background: manualWeightOverride ? '#b45309' : '#1f2937',
-                                        color: '#e2e8f0',
-                                        fontSize: '11px',
-                                        cursor: 'pointer',
-                                        whiteSpace: 'nowrap',
-                                    }}
-                                >
-                                    {manualWeightOverride ? 'RUČNA KOREKCIJA ON' : 'SIGNAL MODE'}
-                                </button>
-                            </div>
-                            <div style={{ marginTop: '4px', fontSize: '11px', color: '#94a3b8' }}>
-                                {manualWeightOverride
-                                    ? 'Ručna korekcija je aktivna. Isključi da opet prati signal sa vage.'
-                                    : (canManualEntry ? 'Ručni unos je dostupan kao fallback.' : 'Ručni unos je uvijek dostupan za korekcije.')}
-                            </div>
-                        </div>
-                        <div style={{ display: 'grid', gap: '8px', minWidth: 260 }}>
-                            <button onClick={handleFirstWeigh} disabled={!activeTicket?.id || firstStepDone || isTicketVoidOrCancelled} style={{ padding: '12px', background: firstStepDone ? '#64748b' : '#1e40af', border: '1px solid #3b82f6', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
-                                1. VAGANJE {isOutboundFlow ? 'PRAZAN' : 'PUN'}
-                            </button>
-                            <button onClick={handleSecondWeigh} disabled={!activeTicket?.id || !firstStepDone || secondStepDone || isTicketVoidOrCancelled} style={{ padding: '12px', background: secondStepDone ? '#64748b' : '#15803d', border: '1px solid #10b981', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
-                                2. VAGANJE {isOutboundFlow ? 'PUN' : 'PRAZAN'}
-                            </button>
-                            <button onClick={handleOpenComplete} disabled={!activeTicket?.id || !secondStepDone || closeSubmitting || isTicketVoidOrCancelled} style={{ padding: '12px', background: '#1e293b', border: '1px solid #475569', color: '#e2e8f0', fontWeight: 700, cursor: 'pointer', opacity: closeSubmitting ? 0.7 : 1 }}>
-                                ZATVORI I ŠTAMPAJ
-                            </button>
-                        </div>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                        {!isNewMode && activeTicket?.status && (
+                            <span style={{
+                                padding: '6px 14px', borderRadius: '999px', fontWeight: 700, fontSize: FS.small,
+                                background: isTicketClosed ? '#065f46' : isTicketVoidOrCancelled ? '#7f1d1d' : '#1e40af',
+                                color: '#fff',
+                            }}>
+                                {activeTicket.status}
+                            </span>
+                        )}
+                        <button
+                            type="button"
+                            disabled={!isNewMode}
+                            onClick={() => isNewMode && setNewTicketForm((p) => ({
+                                ...p,
+                                transactionType: p.transactionType === 'IN' ? 'OUT' : 'IN',
+                                contractId: '',
+                            }))}
+                            style={{
+                                padding: '10px 22px', borderRadius: '6px', fontWeight: 800, fontSize: '16px', border: 'none',
+                                cursor: isNewMode ? 'pointer' : 'default',
+                                background: displayType === 'OUT' ? '#b45309' : '#1d4ed8',
+                                color: '#fff',
+                                opacity: isNewMode ? 1 : 0.85,
+                            }}
+                            title={isNewMode ? 'Klikni za promjenu ULAZ/IZLAZ' : ''}
+                        >
+                            {displayType === 'OUT' ? 'IZLAZ' : 'ULAZ'}
+                        </button>
                     </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr', gap: '12px', minHeight: 0, flex: 1 }}>
-                    <div className="scada-panel" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                        <div className="scada-header" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', justifyContent: 'space-between' }}>
-                            <span>VAGANJA</span>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', fontSize: '10px', fontWeight: 700 }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    Od
-                                    <input type="date" value={listDateFrom} onChange={(e) => setListDateFrom(e.target.value)} style={{ padding: '4px 6px', fontSize: '11px' }} />
-                                </label>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    Do
-                                    <input type="date" value={listDateTo} onChange={(e) => setListDateTo(e.target.value)} style={{ padding: '4px 6px', fontSize: '11px' }} />
-                                </label>
-                                <button
-                                    type="button"
-                                    className="btn-primary"
-                                    style={{ padding: '4px 8px', fontSize: '10px' }}
-                                    onClick={() => {
-                                        const t = localYmd();
-                                        setListDateFrom(t);
-                                        setListDateTo(t);
-                                    }}
-                                >
-                                    Danas
-                                </button>
-                            </div>
+                <div style={{ padding: '18px', display: 'grid', gap: '18px' }}>
+
+                    {/* Vaga live */}
+                    <div style={{ background: '#000', border: '2px solid #334155', borderRadius: '8px', padding: '18px 20px' }}>
+                        <div style={{ color: scaleSignal.signalAvailable ? '#10b981' : '#f59e0b', fontSize: FS.small, marginBottom: '8px' }}>
+                            {scaleSignal.message}
                         </div>
-                        <div style={{ overflowY: 'auto', flex: 1 }}>
-                            {tickets.map((ticket) => {
-                                const st = String(ticket.status || '').toLowerCase();
-                                const rowBg = selectedTicketId === ticket.id
-                                    ? '#dcfce7'
-                                    : st === 'zatvoren'
-                                        ? '#ecfdf5'
-                                        : st === 'otkazan' || st === 'storniran'
-                                            ? '#fef2f2'
-                                            : '#fff';
-                                return (
-                                <div
-                                    key={ticket.id}
-                                    onClick={() => setSelectedTicketId(ticket.id)}
-                                    style={{
-                                        padding: '10px 12px',
-                                        borderBottom: '1px solid var(--border-color)',
-                                        cursor: 'pointer',
-                                        background: rowBg,
-                                    }}
-                                >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ fontSize: '11px', color: '#64748b' }}>{ticket.type}</span>
-                                    </div>
-                                    <div style={{ fontSize: '12px', marginTop: '3px' }}>
-                                        {ticket.supplier?.name || '-'} | {ticket.driver || '-'} | {ticket.plate || '-'}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px', fontWeight: 'bold' }}>
-                                        {ticket.material?.code || '-'} - {ticket.material?.name || '-'}
-                                    </div>
-                                    <div className="font-mono font-bold" style={{ fontSize: '11px', marginTop: '4px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px' }}>
-                                        <span>TARA: {Number(ticket.tare || 0).toLocaleString()}</span>
-                                        <span>BRUTO: {Number(ticket.gross || 0).toLocaleString()}</span>
-                                        <span>NETO: {Number(ticket.net || 0).toLocaleString()}</span>
-                                    </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr auto', gap: '16px', alignItems: 'center' }}>
+                            <div className="scada-readout" style={{ color: '#10b981', fontSize: isMobile ? '38px' : FS.bigNumber, fontWeight: 800, lineHeight: 1 }}>
+                                {weightText}
+                            </div>
+                            <div style={{ display: 'grid', gap: '8px', minWidth: isMobile ? 'auto' : '300px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                                    <input
+                                        type="number"
+                                        value={liveWeight}
+                                        onChange={(event) => {
+                                            setManualWeightOverride(true);
+                                            setLiveWeight(Number(event.target.value || 0));
+                                        }}
+                                        style={{ padding: '10px', fontSize: FS.input, background: '#0b1220', color: '#e2e8f0', border: '1px solid #334155', borderRadius: '6px' }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setManualWeightOverride((prev) => !prev)}
+                                        style={{
+                                            padding: '10px 14px', borderRadius: '6px', border: '1px solid #334155', fontSize: FS.small,
+                                            background: manualWeightOverride ? '#b45309' : '#1f2937', color: '#e2e8f0', cursor: 'pointer', whiteSpace: 'nowrap',
+                                        }}
+                                    >
+                                        {manualWeightOverride ? 'RUČNA KOREKCIJA' : 'SIGNAL'}
+                                    </button>
                                 </div>
-                            );})}
-                            {!tickets.length && <div style={{ padding: '16px', color: '#64748b' }}>Nema vaganja u izabranom periodu.</div>}
+                                <div style={{ fontSize: FS.small, color: '#94a3b8' }}>
+                                    {manualWeightOverride ? 'Ručna korekcija je aktivna.' : 'Ručni unos je uvijek dostupan za korekcije.'}
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <div className="scada-panel" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                        <div className="scada-header">DETALJI VAGANJA</div>
-                        {!activeTicket ? (
-                            <div style={{ padding: '16px', color: '#64748b' }}>Odaberi vaganje iz liste.</div>
-                        ) : (
-                            <div style={{ padding: '12px', display: 'grid', gap: '10px' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tablice (opciono)</label><input list="gate-known-plates" value={ticketDraft.plate} onChange={(e) => setTicketDraft((p) => ({ ...p, plate: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }} /></div>
-                                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Vozač (opciono)</label><input list="gate-known-drivers" value={ticketDraft.driver} onChange={(e) => setTicketDraft((p) => ({ ...p, driver: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }} /></div>
-                                </div>
-                                <div>
-                                    <label style={{ fontSize: '11px', fontWeight: 700 }}>Komitent (opciono)</label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                                        <input
-                                            list="gate-supplier-options"
-                                            value={detailSupplierQuery}
-                                            placeholder="- Nije odabrano -"
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                setDetailSupplierQuery(value);
-                                                const resolved = resolveLookupId(value, supplierLookupOptions);
-                                                setTicketDraft((prev) => ({ ...prev, supplierId: resolved || '' }));
-                                            }}
-                                            style={{ width: '100%', padding: '6px' }}
-                                        />
-                                        <button type="button" className="btn-primary" style={{ padding: '6px 10px', fontSize: '11px' }} onClick={() => openCreatePartnerModal('ticketDetails')}>
-                                            + Novi komitent
-                                        </button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal (može naknadno)</label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setMaterialPickerTarget('ticketDetails');
-                                                setMaterialPickerOpen(true);
-                                            }}
-                                            style={{ width: '100%', padding: '8px', textAlign: 'left', border: '1px solid var(--border-color)', background: '#fff' }}
-                                        >
-                                            {materials.find((m) => m.id === ticketDraft.materialId)
-                                                ? formatPickedMaterial(materials.find((m) => m.id === ticketDraft.materialId))
-                                                : 'Odaberi materijal'}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setTicketDraft((p) => ({ ...p, materialId: '' }))}
-                                            style={{ padding: '8px 10px', border: '1px solid var(--border-color)', background: '#fff' }}
-                                        >
-                                            Očisti
-                                        </button>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Bruto (korekcija)</label><input type="number" value={ticketDraft.gross} onChange={(e) => setTicketDraft((p) => ({ ...p, gross: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }} /></div>
-                                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tara (korekcija)</label><input type="number" value={ticketDraft.tare} onChange={(e) => setTicketDraft((p) => ({ ...p, tare: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }} /></div>
-                                </div>
-                                <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                    Korekcije važe dok tiket nije zatvoren. Neto i ukupno će se preračunati pri čuvanju.
-                                    Ako polje bruto/tara ostane prazno, zadržava se postojeća vrijednost tiketa.
-                                </div>
-                                <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Cijena/KG (opciono)</label><input type="number" value={ticketDraft.pricePerKg} onChange={(e) => setTicketDraft((p) => ({ ...p, pricePerKg: e.target.value }))} style={{ width: '100%', padding: '6px', marginTop: '4px' }} /></div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                                    <button className="btn-primary" disabled={isTicketClosed || isTicketVoidOrCancelled} style={{ width: 'fit-content', padding: '6px 12px', opacity: isTicketClosed || isTicketVoidOrCancelled ? 0.6 : 1 }} onClick={handleSaveTicketDetails}>Sačuvaj detalje</button>
-                                    {canGateCancel && (
-                                        <button type="button" style={{ padding: '6px 12px', background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 700, fontSize: '11px', cursor: 'pointer' }} onClick={handleGateCancelTicket}>
-                                            Otkaži vaganje
-                                        </button>
-                                    )}
-                                    {canGateVoid && (
-                                        <button type="button" style={{ padding: '6px 12px', background: '#7f1d1d', color: '#fff', border: 'none', fontWeight: 700, fontSize: '11px', cursor: 'pointer' }} onClick={handleGateVoidTicket}>
-                                            Storno (knjiženje)
-                                        </button>
-                                    )}
-                                </div>
+                    {/* Osnovna polja */}
+                    <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr', gap: '16px' }}>
+                        <div>
+                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Artikl</label>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMaterialPickerTarget(isNewMode ? 'newTicket' : 'ticketDetails');
+                                    setMaterialPickerOpen(true);
+                                }}
+                                style={{ ...styles.input, textAlign: 'left', cursor: 'pointer' }}
+                            >
+                                {isNewMode
+                                    ? (selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal')
+                                    : (materials.find((m) => m.id === ticketDraft.materialId)
+                                        ? formatPickedMaterial(materials.find((m) => m.id === ticketDraft.materialId))
+                                        : 'Odaberi materijal')}
+                            </button>
+                        </div>
+                        <div>
+                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Komitent</label>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                                <input
+                                    list="gate-supplier-options"
+                                    value={isNewMode ? newSupplierQuery : detailSupplierQuery}
+                                    placeholder="- Nije odabrano -"
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        const resolved = resolveLookupId(value, supplierLookupOptions);
+                                        if (isNewMode) {
+                                            setNewSupplierQuery(value);
+                                            setNewTicketForm((prev) => ({ ...prev, supplierId: resolved || '' }));
+                                        } else {
+                                            setDetailSupplierQuery(value);
+                                            setTicketDraft((prev) => ({ ...prev, supplierId: resolved || '' }));
+                                        }
+                                    }}
+                                    style={styles.input}
+                                />
+                                <button type="button" style={styles.btn} onClick={() => openCreatePartnerModal(isNewMode ? 'newTicket' : 'ticketDetails')}>
+                                    + Novi
+                                </button>
+                            </div>
+                        </div>
 
-                                <div style={{ border: '1px solid var(--border-color)', background: '#f8fafc', padding: '10px', display: 'grid', gap: '6px' }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700 }}>Skidanje ambalaže (opciono)</div>
-                                    {packagingRows.map((row) => (
-                                        <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 120px auto', gap: '6px' }}>
-                                            <input placeholder="Vrsta ambalaže" value={row.type} onChange={(e) => updatePackagingRow(row.id, 'type', e.target.value)} style={{ padding: '6px' }} />
-                                            <input type="number" placeholder="KG" value={row.kg} onChange={(e) => updatePackagingRow(row.id, 'kg', e.target.value)} style={{ padding: '6px', textAlign: 'right' }} />
-                                            <button type="button" onClick={() => removePackagingRow(row.id)} style={{ padding: '6px 10px', border: '1px solid var(--border-color)', background: '#fff' }}>Ukloni</button>
-                                        </div>
+                        <div>
+                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Registarski broj</label>
+                            <input
+                                list="gate-known-plates"
+                                value={isNewMode ? newTicketForm.plate : ticketDraft.plate}
+                                onChange={(e) => isNewMode
+                                    ? setNewTicketForm((p) => ({ ...p, plate: e.target.value }))
+                                    : setTicketDraft((p) => ({ ...p, plate: e.target.value }))}
+                                style={styles.input}
+                            />
+                        </div>
+                        <div>
+                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Vozač</label>
+                            <input
+                                list="gate-known-drivers"
+                                value={isNewMode ? newTicketForm.driver : ticketDraft.driver}
+                                onChange={(e) => isNewMode
+                                    ? setNewTicketForm((p) => ({ ...p, driver: e.target.value }))
+                                    : setTicketDraft((p) => ({ ...p, driver: e.target.value }))}
+                                style={styles.input}
+                            />
+                        </div>
+
+                        {!isNewMode && (
+                            <div>
+                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Primio/Predao</label>
+                                <select
+                                    value={inspectionWorkerId}
+                                    onChange={(e) => setInspectionWorkerId(e.target.value)}
+                                    style={styles.input}
+                                >
+                                    {inspectionWorkers.length === 0 && <option value="">Nema definisanih kontrolora</option>}
+                                    {inspectionWorkers.map((worker) => (
+                                        <option key={worker.id} value={worker.id}>{worker.name} ({worker.code})</option>
                                     ))}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <button type="button" className="btn-primary" style={{ padding: '6px 10px', fontSize: '11px' }} onClick={addPackagingRow}>+ Ambalaža</button>
-                                        <div className="font-mono" style={{ fontSize: '12px' }}>Ukupno odbitak: {Number(totalPackagingKg || 0).toLocaleString()} KG</div>
-                                    </div>
-                                </div>
+                                </select>
                             </div>
                         )}
-                    </div>
-                </div>
-
-                {gateInfo && <div style={{ padding: '8px', background: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', fontSize: '11px' }}>{gateInfo}</div>}
-                {gateError && <div style={{ padding: '8px', background: '#fef2f2', border: '1px solid #ef4444', color: '#991b1b', fontSize: '11px' }}>{gateError}</div>}
-                <datalist id="gate-known-plates">
-                    {knownPlates.map((plate) => <option key={plate} value={plate} />)}
-                </datalist>
-                <datalist id="gate-known-drivers">
-                    {knownDrivers.map((driver) => <option key={driver} value={driver} />)}
-                </datalist>
-                <datalist id="gate-supplier-options">
-                    {supplierLookupOptions.map((option) => <option key={option.id} value={option.label} />)}
-                </datalist>
-                <datalist id="gate-announcement-options">
-                    {announcementLookupOptions.map((option) => <option key={option.id} value={option.label} />)}
-                </datalist>
-
-                <Modal open={newTicketOpen} onClose={() => setNewTicketOpen(false)} title="Novi prijem" width={560}>
-                    <div style={{ display: 'grid', gap: '10px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <button type="button" onClick={() => setNewTicketForm((p) => ({ ...p, transactionType: 'IN' }))} style={{ padding: '14px', border: '1px solid #94a3b8', background: newTicketForm.transactionType === 'IN' ? '#dbeafe' : '#fff', fontWeight: 800 }}>ULAZ</button>
-                            <button type="button" onClick={() => setNewTicketForm((p) => ({ ...p, transactionType: 'OUT' }))} style={{ padding: '14px', border: '1px solid #94a3b8', background: newTicketForm.transactionType === 'OUT' ? '#dbeafe' : '#fff', fontWeight: 800 }}>IZLAZ</button>
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal *</label>
-                            <button type="button" onClick={() => { setMaterialPickerTarget('newTicket'); setMaterialPickerOpen(true); }} style={{ width: '100%', marginTop: '4px', padding: '10px', textAlign: 'left', border: '1px solid var(--border-color)', background: '#fff' }}>
-                                {selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal'}
-                            </button>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tablice (opciono)</label><input list="gate-known-plates" value={newTicketForm.plate} onChange={(e) => setNewTicketForm((p) => ({ ...p, plate: e.target.value }))} style={{ width: '100%', marginTop: '4px', padding: '8px' }} /></div>
-                            <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Vozač (opciono)</label><input list="gate-known-drivers" value={newTicketForm.driver} onChange={(e) => setNewTicketForm((p) => ({ ...p, driver: e.target.value }))} style={{ width: '100%', marginTop: '4px', padding: '8px' }} /></div>
-                        </div>
-                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', display: 'grid', gap: '8px' }}>
-                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>Dodatno (opciono)</div>
+                        {isNewMode && (
                             <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Najava</label>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
+                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Najava (opciono)</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
                                     <input
                                         list="gate-announcement-options"
                                         value={selectedAnnouncementQuery}
@@ -1176,745 +1302,443 @@ export default function GatePage() {
                                             setSelectedAnnouncementQuery(value);
                                             setSelectedAnnouncementId(resolveLookupId(value, announcementLookupOptions) || '');
                                         }}
-                                        style={{ width: '100%', padding: '8px' }}
+                                        style={styles.input}
                                     />
-                                    <button type="button" className="btn-primary" style={{ padding: '8px 10px', fontSize: '11px' }} onClick={openCreateAnnouncementModal}>
-                                        + Nova najava
-                                    </button>
+                                    <button type="button" style={styles.btn} onClick={openCreateAnnouncementModal}>+ Nova</button>
                                 </div>
                             </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Komitent</label>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                                    <input
-                                        list="gate-supplier-options"
-                                        value={newSupplierQuery}
-                                        placeholder="- Nije odabrano -"
-                                        onChange={(e) => {
-                                            const value = e.target.value;
-                                            setNewSupplierQuery(value);
-                                            const resolved = resolveLookupId(value, supplierLookupOptions);
-                                            setNewTicketForm((prev) => ({ ...prev, supplierId: resolved || '' }));
-                                        }}
-                                        style={{ width: '100%', padding: '8px' }}
-                                    />
-                                    <button type="button" className="btn-primary" style={{ padding: '8px 10px', fontSize: '11px' }} onClick={() => openCreatePartnerModal('newTicket')}>
-                                        + Novi komitent
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                        <button onClick={() => setNewTicketOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                        <button className="btn-primary" style={{ padding: '8px 16px' }} onClick={handleCreateTicket}>Kreiraj prijem</button>
-                    </div>
-                </Modal>
+                        )}
 
-                <Modal open={completeOpen} onClose={() => setCompleteOpen(false)} title="Zatvori vaganje" width={560}>
-                    <div style={{ display: 'grid', gap: '10px' }}>
-                        <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Vozač za štampu (opciono)</label><input list="gate-known-drivers" value={closeDriverName} onChange={(e) => setCloseDriverName(e.target.value)} style={{ width: '100%', marginTop: '4px', padding: '8px' }} /></div>
-                        {activeTicket?.type === 'OUT' && (
+                        {/* Narudžba */}
+                        <div>
+                            <label style={{ ...styles.label, color: '#cbd5e1' }}>
+                                Narudžba (opciono) — {isOutboundFlow ? 'prodaja' : 'nabavka'}
+                            </label>
+                            <select
+                                value={selectedContractId || ''}
+                                disabled={contractLocked}
+                                onChange={(e) => handleContractChange(e.target.value)}
+                                style={styles.input}
+                            >
+                                <option value="">- Bez narudžbe -</option>
+                                {contractOptions.map((c) => (
+                                    <option key={c.id} value={c.id}>{contractLabel(c)}</option>
+                                ))}
+                            </select>
+                        </div>
+                        {selectedContract && contractItems.length > 1 && (
                             <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal za sljedeće OUT vaganje</label>
-                                <select value={nextOutboundMaterialId} onChange={(e) => setNextOutboundMaterialId(e.target.value)} style={{ width: '100%', marginTop: '4px', padding: '8px' }}>
-                                    <option value="">- Materijal -</option>
-                                    {materials.map((m) => <option key={m.id} value={m.id}>{m.code} - {m.name}</option>)}
+                                <label style={{ ...styles.label, color: '#cbd5e1' }}>Materijal sa narudžbe</label>
+                                <select
+                                    value={currentMaterialId || ''}
+                                    disabled={contractLocked}
+                                    onChange={(e) => handleContractMaterialChange(e.target.value)}
+                                    style={styles.input}
+                                >
+                                    <option value="">- Odaberi -</option>
+                                    {contractItems.map((i) => {
+                                        const rem = i.qtyKg !== null && i.qtyKg !== undefined
+                                            ? ` — preostalo ${fmtKg(Math.max(0, Number(i.qtyKg) - Number(i.doneKg || 0)))} kg`
+                                            : '';
+                                        return <option key={i.id} value={i.materialId}>{i.material?.code} - {i.material?.name}{rem}</option>;
+                                    })}
                                 </select>
                             </div>
                         )}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
-                        <button onClick={() => setCompleteOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                        {activeTicket?.type === 'OUT' && (
-                            <button className="btn-primary" disabled={closeSubmitting} style={{ padding: '8px 16px', background: '#1d4ed8', opacity: closeSubmitting ? 0.7 : 1, cursor: closeSubmitting ? 'not-allowed' : 'pointer' }} onClick={() => handleCloseTicket({ continueOutbound: true })}>
-                                {closeSubmitting ? 'Obrada...' : 'Zatvori & novo vaganje'}
+
+                    {selectedContract && (
+                        <ContractInfo
+                            contract={selectedContract}
+                            materialId={currentMaterialId}
+                            netKg={!isNewMode && !isTicketClosed && !isTicketVoidOrCancelled ? Number(activeTicket?.net || 0) : 0}
+                        />
+                    )}
+
+                    {/* Vaganje / neto */}
+                    {!isNewMode && activeTicket && (
+                        <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr 1fr', gap: '14px', alignItems: 'stretch' }}>
+                            <button
+                                type="button"
+                                onClick={handleFirstWeigh}
+                                disabled={firstStepDone || isTicketVoidOrCancelled}
+                                style={{
+                                    ...styles.btnPrimary, background: firstStepDone ? '#334155' : '#1d4ed8',
+                                    padding: '16px', fontSize: '16px', opacity: (firstStepDone || isTicketVoidOrCancelled) ? 0.75 : 1,
+                                    cursor: (firstStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                {isOutboundFlow ? 'Očitaj prazan' : 'Očitaj pun'}
+                                <div style={{ fontSize: FS.small, fontWeight: 500, marginTop: '4px' }}>
+                                    {isOutboundFlow ? Number(activeTicket?.tare || 0).toLocaleString() : Number(activeTicket?.gross || 0).toLocaleString()} kg
+                                </div>
                             </button>
-                        )}
-                        <button className="btn-primary" disabled={closeSubmitting} style={{ padding: '8px 16px', opacity: closeSubmitting ? 0.7 : 1, cursor: closeSubmitting ? 'not-allowed' : 'pointer' }} onClick={() => handleCloseTicket()}>{closeSubmitting ? 'Obrada...' : 'Zatvori & štampaj'}</button>
-                    </div>
-                </Modal>
+                            <button
+                                type="button"
+                                onClick={handleSecondWeigh}
+                                disabled={!firstStepDone || secondStepDone || isTicketVoidOrCancelled}
+                                style={{
+                                    ...styles.btnPrimary, background: secondStepDone ? '#334155' : '#15803d',
+                                    padding: '16px', fontSize: '16px', opacity: (!firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 0.75 : 1,
+                                    cursor: (!firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                {isOutboundFlow ? 'Očitaj pun' : 'Očitaj prazan'}
+                                <div style={{ fontSize: FS.small, fontWeight: 500, marginTop: '4px' }}>
+                                    {isOutboundFlow ? Number(activeTicket?.gross || 0).toLocaleString() : Number(activeTicket?.tare || 0).toLocaleString()} kg
+                                </div>
+                            </button>
+                            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '6px', padding: '14px', textAlign: 'center' }}>
+                                <div style={{ fontSize: FS.small, color: '#94a3b8' }}>NETO</div>
+                                <div style={{ fontSize: FS.neto, fontWeight: 800, color: '#10b981' }}>
+                                    {Number(activeTicket?.net || 0).toLocaleString()} <span style={{ fontSize: '16px' }}>kg</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
-                <MaterialPicker
-                    open={materialPickerOpen}
-                    onClose={() => setMaterialPickerOpen(false)}
-                    onSelect={({ material }) => {
-                        if (materialPickerTarget === 'ticketDetails') {
-                            const backendMaterial = resolveBackendMaterial(materials, material);
-                            setTicketDraft((prev) => ({ ...prev, materialId: backendMaterial?.id || material?.id || '' }));
-                        } else {
-                            setSelectedMaterial(material);
-                        }
-                    }}
-                    onMaterialCreated={() => refreshMaterials().catch(() => null)}
-                />
-                <Modal open={createAnnouncementOpen} onClose={() => setCreateAnnouncementOpen(false)} title="Nova najava / narudžba" width={560}>
-                    <div style={{ display: 'grid', gap: '10px' }}>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal</label>
-                            <div style={{ width: '100%', marginTop: '4px', padding: '8px', border: '1px solid var(--border-color)', background: '#f8fafc' }}>
-                                {selectedMaterial ? formatPickedMaterial(selectedMaterial) : '-'}
-                            </div>
+                    {isTareFallback && !isNewMode && (
+                        <div style={{ padding: '10px', background: '#78350f', color: '#fde68a', fontSize: FS.small, borderRadius: '6px' }}>
+                            Live signal nije dostupan — korišten je zadnji poznati tara podatak sa vaganja.
                         </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Komitent *</label>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                                <input
-                                    list="gate-supplier-options"
-                                    value={newAnnouncementSupplierQuery}
-                                    placeholder="Odaberi ili upiši komitenta"
-                                    onChange={(event) => {
-                                        const value = event.target.value;
-                                        setNewAnnouncementSupplierQuery(value);
-                                        const resolved = resolveLookupId(value, supplierLookupOptions);
-                                        setNewAnnouncementForm((prev) => ({ ...prev, supplierId: resolved || '' }));
-                                    }}
-                                    style={{ width: '100%', padding: '8px' }}
-                                />
-                                <button type="button" className="btn-primary" style={{ padding: '8px 10px', fontSize: '11px' }} onClick={() => openCreatePartnerModal('newAnnouncement')}>
-                                    + Novi komitent
-                                </button>
-                            </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Planirano KG *</label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={newAnnouncementForm.expectedKg}
-                                    onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedKg: event.target.value }))}
-                                    style={{ width: '100%', marginTop: '4px', padding: '8px' }}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Tablice (opciono)</label>
-                                <input
-                                    list="gate-known-plates"
-                                    value={newAnnouncementForm.truck}
-                                    onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, truck: event.target.value }))}
-                                    style={{ width: '100%', marginTop: '4px', padding: '8px' }}
-                                />
-                            </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Datum najave</label>
-                                <input
-                                    type="date"
-                                    value={newAnnouncementForm.expectedDate}
-                                    onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedDate: event.target.value }))}
-                                    style={{ width: '100%', marginTop: '4px', padding: '8px' }}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Status</label>
-                                <input
-                                    type="text"
-                                    value={newAnnouncementForm.status}
-                                    onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, status: event.target.value }))}
-                                    style={{ width: '100%', marginTop: '4px', padding: '8px' }}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
-                        <button onClick={() => setCreateAnnouncementOpen(false)} style={{ padding: '8px 16px', border: '1px solid var(--border-color)', background: '#fff' }}>Odustani</button>
-                        <button className="btn-primary" style={{ padding: '8px 16px' }} onClick={handleCreateAnnouncement}>Sačuvaj najavu</button>
-                    </div>
-                </Modal>
-                <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title="Novi komitent / partner" width={520}>
-                    <div style={{ display: 'grid', gap: '10px' }}>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Naziv komitenta *</label>
-                            <input
-                                type="text"
-                                style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                value={newPartnerForm.name}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, name: event.target.value }))}
-                            />
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Grad</label>
-                                <input
-                                    type="text"
-                                    style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                    value={newPartnerForm.city}
-                                    onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, city: event.target.value }))}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>JIB</label>
-                                <input
-                                    type="text"
-                                    style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                    value={newPartnerForm.jib}
-                                    onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, jib: event.target.value }))}
-                                />
-                            </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Telefon</label>
-                                <input
-                                    type="text"
-                                    style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                    value={newPartnerForm.phone}
-                                    onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, phone: event.target.value }))}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '11px', fontWeight: 700 }}>Email</label>
-                                <input
-                                    type="email"
-                                    style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                    value={newPartnerForm.email}
-                                    onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, email: event.target.value }))}
-                                />
-                            </div>
-                        </div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                            <input
-                                type="checkbox"
-                                checked={newPartnerForm.createCustomerMirror}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, createCustomerMirror: event.target.checked }))}
-                            />
-                            Kreiraj i kao kupca (isti partner za ulaz i izlaz)
-                        </label>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                        <button onClick={() => setCreatePartnerOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                        <button className="btn-primary" style={{ padding: '8px 20px' }} onClick={handleCreatePartner}>SAČUVAJ KOMITENTA</button>
-                    </div>
-                </Modal>
-            </div>
-        );
-    }
+                    )}
 
-    return (
-        <div style={{ display: 'flex', gap: '12px', height: '100%', flexDirection: isCompact ? 'column' : 'row' }}>
-            {/* Left: Active Tickets List */}
-            <div className="scada-panel" style={{ flex: isCompact ? '0 0 auto' : '0 0 400px', display: 'flex', flexDirection: 'column', minHeight: isCompact ? 220 : 'auto' }}>
-                <div className="scada-header" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>AKTIVNI TIKETI</span>
-                    <button onClick={() => setNewTicketOpen(true)} style={{ background: '#10b981', border: 'none', color: 'white', padding: '2px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>+ NOVI TIKET</button>
-                </div>
-                <div style={{ overflowY: 'auto', flex: 1 }}>
-                    {tickets.map(t => (
-                        <div key={t.id} onClick={() => setSelectedTicketId(t.id)} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', fontSize: '12px', background: selectedTicketId === t.id ? '#eff6ff' : 'transparent' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                <span className="font-mono" style={{ fontWeight: 700 }}>{t.code || t.id}</span>
-                                <span style={{ padding: '2px 6px', fontSize: '10px', fontWeight: 700, background: t.status === 'Zatvoren' ? '#dcfce7' : t.status === 'Čeka 2. Vaganje' ? '#fef3c7' : '#dbeafe', color: t.status === 'Zatvoren' ? '#15803d' : t.status === 'Čeka 2. Vaganje' ? '#b45309' : '#1d4ed8' }}>{t.status || '-'}</span>
-                            </div>
-                            <div>{t.supplier?.name || '-'} — {t.material?.code || '-'}</div>
-                            <div className="font-mono" style={{ color: 'var(--text-muted)', marginTop: '2px' }}>{t.plate} | Bruto: {Number(t.gross || 0).toLocaleString()} KG{t.net ? ` | Neto: ${Number(t.net || 0).toLocaleString()} KG` : ''}</div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Right: Live Scale + CCTV */}
-            <div className="scada-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0f172a', color: '#e2e8f0', minHeight: 0 }}>
-                <div className="scada-header" style={{ background: '#1e293b', borderBottom: '1px solid #334155' }}>VAGA — LIVE OČITANJE</div>
-                <div style={{ padding: isMobile ? '12px' : '24px', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-                    {/* Scale Readout */}
-                    <div style={{ background: '#000', border: '2px solid #334155', padding: '24px', textAlign: 'center' }}>
-                        <div style={{ color: '#10b981', fontSize: '12px', fontWeight: 'bold', letterSpacing: '2px', textAlign: 'left', marginBottom: '8px' }}>
-                            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', marginRight: '8px' }}></span>
-                            {scaleConfig.scaleName} — {scaleConfig.signalSource} {scaleConfig.mode === 'manual' ? 'MANUAL MODE' : 'SIGNAL MODE'}
-                        </div>
-                        {scaleConfig.signalSource === 'TCP/IP' && (
-                            <div style={{ color: '#94a3b8', fontSize: '10px', textAlign: 'left', marginBottom: '6px' }}>
-                                TCP: {scaleConfig.tcpHost || '-'}:{scaleConfig.tcpPort || '-'}
-                            </div>
-                        )}
-                        {scaleConfig.signalSource === 'RS232' && (
-                            <div style={{ color: '#94a3b8', fontSize: '10px', textAlign: 'left', marginBottom: '6px' }}>
-                                RS232: {scaleConfig.rs232Path || '-'} @ {scaleConfig.rs232BaudRate || '-'}
-                            </div>
-                        )}
-                        <div style={{ color: scaleSignal.signalAvailable ? '#10b981' : '#f59e0b', fontSize: '10px', textAlign: 'left', marginBottom: '6px' }}>
-                            {scaleSignal.message}
-                        </div>
-                        <div className="scada-readout" style={{ color: '#10b981', fontSize: isMobile ? '36px' : '64px', fontWeight: 'bold', textShadow: '0 0 10px rgba(16,185,129,0.5)' }}>
-                            {weightText}
-                        </div>
-                    </div>
-                    {canManualEntry && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px', alignItems: 'end' }}>
-                            <div>
-                                <label style={{ fontSize: '11px', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>
-                                    Ručni unos očitanja vage ({scaleConfig.unit}){scaleConfig.mode === 'signal' ? ' — fallback bez signala' : ''}
-                                </label>
-                                <input
-                                    type="number"
-                                    value={liveWeight}
-                                    onChange={(event) => setLiveWeight(Number(event.target.value || 0))}
-                                    className="font-mono"
-                                    style={{ width: '100%', padding: '8px', background: '#0b1220', color: '#e2e8f0', border: '1px solid #334155' }}
-                                />
-                            </div>
-                            {role === 'owner' && (
-                                <Link
-                                    href="/gate/configure"
-                                    style={{ padding: '8px 12px', fontSize: '11px', textDecoration: 'none', background: '#1e40af', border: '1px solid #3b82f6', color: 'white', fontWeight: 700 }}
-                                >
-                                    CONFIGURE
-                                </Link>
+                    {/* Ambalaža / napomena - collapsible */}
+                    {!isNewMode && (
+                        <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}>
+                            <button
+                                type="button"
+                                onClick={() => setPackagingOpen((v) => !v)}
+                                style={{
+                                    width: '100%', textAlign: 'left', padding: '12px 16px', background: 'transparent', border: 'none',
+                                    color: '#e2e8f0', fontWeight: 700, fontSize: FS.body, cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
+                                }}
+                            >
+                                <span>Ambalaža / napomena {totalPackagingKg > 0 ? `(odbitak: ${Number(totalPackagingKg).toLocaleString()} kg)` : ''}</span>
+                                <span>{packagingOpen ? '▲' : '▼'}</span>
+                            </button>
+                            {packagingOpen && (
+                                <div style={{ padding: '0 16px 16px' }}>
+                                    <div style={{ display: 'grid', gap: '8px' }}>
+                                        {packagingRows.map((row) => (
+                                            <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: '8px' }}>
+                                                <input
+                                                    placeholder="Vrsta ambalaže"
+                                                    value={row.type}
+                                                    onChange={(e) => updatePackagingRow(row.id, 'type', e.target.value)}
+                                                    style={styles.input}
+                                                />
+                                                <input
+                                                    type="number"
+                                                    placeholder="KG"
+                                                    value={row.kg}
+                                                    onChange={(e) => updatePackagingRow(row.id, 'kg', e.target.value)}
+                                                    style={{ ...styles.input, textAlign: 'right' }}
+                                                />
+                                                <button type="button" style={styles.btn} onClick={() => removePackagingRow(row.id)}>Ukloni</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                                        <button type="button" style={styles.btn} onClick={addPackagingRow}>+ Ambalaža</button>
+                                        <div style={{ fontSize: FS.body, fontWeight: 700 }}>Ukupno odbitak: {Number(totalPackagingKg || 0).toLocaleString()} KG</div>
+                                    </div>
+                                    <div style={{ marginTop: '10px' }}>
+                                        <label style={{ ...styles.label, color: '#cbd5e1' }}>Cijena/KG</label>
+                                        <input
+                                            type="number"
+                                            value={ticketDraft.pricePerKg}
+                                            onChange={(e) => setTicketDraft((p) => ({ ...p, pricePerKg: e.target.value }))}
+                                            style={{ ...styles.input, maxWidth: '200px' }}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '10px' }}>
+                                        <div>
+                                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Bruto (korekcija)</label>
+                                            <input type="number" value={ticketDraft.gross} onChange={(e) => setTicketDraft((p) => ({ ...p, gross: e.target.value }))} style={styles.input} />
+                                        </div>
+                                        <div>
+                                            <label style={{ ...styles.label, color: '#cbd5e1' }}>Tara (korekcija)</label>
+                                            <input type="number" value={ticketDraft.tare} onChange={(e) => setTicketDraft((p) => ({ ...p, tare: e.target.value }))} style={styles.input} />
+                                        </div>
+                                    </div>
+                                </div>
                             )}
                         </div>
                     )}
-                    <div style={{ padding: '8px', background: '#fffbeb', border: '1px solid #f59e0b', color: '#92400e', fontSize: '11px' }}>
-                        Fleksibilni tok je aktivan: tiket može ostati otvoren bez drugog vaganja. Sistem prikazuje upozorenje dok se ne kompletira.
-                    </div>
-                    {gateInfo && (
-                        <div style={{ padding: '8px', background: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', fontSize: '11px' }}>
-                            {gateInfo}
-                        </div>
-                    )}
-                    {gateError && (
-                        <div style={{ padding: '8px', background: '#fef2f2', border: '1px solid #ef4444', color: '#991b1b', fontSize: '11px' }}>
-                            {gateError}
-                        </div>
-                    )}
 
-                    {/* Process Buttons */}
-                    <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr 1fr', gap: '8px' }}>
-                        <button
-                            onClick={() => setFirstWeighOpen(true)}
-                            disabled={!activeTicket?.id || firstStepDone || isTicketVoidOrCancelled}
-                            title={!activeTicket?.id ? 'Odaberi otvoreni tiket' : (firstStepDone ? '1. vaganje je već upisano' : '')}
-                            style={{
-                                padding: isMobile ? '10px' : '12px',
-                                background: firstStepDone ? '#64748b' : '#1e40af',
-                                border: '1px solid #3b82f6',
-                                color: 'white',
-                                fontWeight: 700,
-                                cursor: (!activeTicket?.id || firstStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
-                                opacity: (!activeTicket?.id || firstStepDone || isTicketVoidOrCancelled) ? 0.7 : 1,
-                            }}
-                        >
-                            ⚖️ 1. VAGANJE ({isOutboundFlow ? 'TARA' : 'BRUTO'})
-                        </button>
-                        <button onClick={() => setInspectionOpen(true)} style={{ padding: isMobile ? '10px' : '12px', background: '#b45309', border: '1px solid #f59e0b', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '12px' }}>🔍 INSPEKCIJA</button>
-                        <button
-                            onClick={() => setSecondWeighOpen(true)}
-                            disabled={!activeTicket?.id || !firstStepDone || secondStepDone || isTicketVoidOrCancelled}
-                            title={!activeTicket?.id ? 'Odaberi otvoreni tiket' : (!firstStepDone ? 'Prvo uradi 1. vaganje' : (secondStepDone ? '2. vaganje je već upisano' : ''))}
-                            style={{
-                                padding: isMobile ? '10px' : '12px',
-                                background: secondStepDone ? '#64748b' : '#15803d',
-                                border: '1px solid #10b981',
-                                color: 'white',
-                                fontWeight: 700,
-                                cursor: (!activeTicket?.id || !firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
-                                opacity: (!activeTicket?.id || !firstStepDone || secondStepDone || isTicketVoidOrCancelled) ? 0.7 : 1,
-                            }}
-                        >
-                            ⚖️ 2. VAGANJE ({isOutboundFlow ? 'BRUTO' : 'TARA'})
-                        </button>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr', gap: '8px' }}>
-                        <button onClick={() => setXrfOpen(true)} style={{ padding: '10px', background: '#1e293b', border: '1px solid #475569', color: '#e2e8f0', fontWeight: 600, cursor: 'pointer', fontSize: '11px' }}>📡 ZAHTJEV ZA XRF</button>
-                        <button onClick={handleOpenComplete} disabled={closeSubmitting} style={{ padding: '10px', background: '#1e293b', border: '1px solid #475569', color: '#e2e8f0', fontWeight: 600, cursor: 'pointer', fontSize: '11px', opacity: closeSubmitting ? 0.7 : 1 }}>✅ ZATVORI TIKET I ŠTAMPAJ</button>
-                    </div>
-
-                    {/* CCTV */}
-                    <div style={{ display: 'grid', gridTemplateColumns: isCompact ? '1fr' : '1fr 1fr', gridTemplateRows: isCompact ? 'none' : '1fr 1fr', gap: '8px', flex: 1 }}>
-                        {['CAM_FRONT', 'CAM_BACK', 'CAM_LOAD', 'CAM_SCALE'].map(cam => (
-                            <div key={cam} style={{ background: '#1e293b', border: '1px solid #334155', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '80px' }}>
-                                <span style={{ position: 'absolute', top: '4px', left: '4px', background: 'rgba(0,0,0,0.7)', padding: '2px 6px', fontSize: '9px', fontFamily: 'monospace' }}>{cam}</span>
-                                <span style={{ color: '#475569', fontSize: '11px' }}>BEZ SIGNALA</span>
-                            </div>
-                        ))}
+                    {/* Akcije dole */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'flex-end', borderTop: '1px solid #334155', paddingTop: '16px' }}>
+                        {isNewMode ? (
+                            <button type="button" style={styles.btnGreen} onClick={handleCreateTicket}>
+                                ✓ Kreiraj vaganje
+                            </button>
+                        ) : (
+                            <>
+                                {canGateCancel && (
+                                    <button type="button" style={styles.btnAmber} onClick={handleGateCancelTicket}>Otkaži vaganje</button>
+                                )}
+                                {canGateVoid && (
+                                    <button type="button" style={styles.btnDanger} onClick={handleGateVoidTicket}>Storno (knjiženje)</button>
+                                )}
+                                <button
+                                    type="button"
+                                    style={{ ...styles.btn, background: '#334155', color: '#e2e8f0', borderColor: '#475569' }}
+                                    disabled={isTicketClosed || isTicketVoidOrCancelled}
+                                    onClick={handleSaveTicketDetails}
+                                >
+                                    OK — Sačuvaj
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{ ...styles.btnGreen, opacity: (!secondStepDone || isTicketVoidOrCancelled || closeSubmitting) ? 0.6 : 1 }}
+                                    disabled={!secondStepDone || isTicketVoidOrCancelled || closeSubmitting}
+                                    onClick={handleOpenComplete}
+                                >
+                                    🖨️ Zatvori & Vagarski list
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
 
-            {/* MODAL: Novi Tiket */}
-            <Modal open={newTicketOpen} onClose={() => setNewTicketOpen(false)} title="Novi Vagarski Tiket — Registracija Ulaza">
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Registarske Tablice *</label>
-                        <div style={{ display: 'flex', marginTop: '4px' }}>
-                            <input type="text" className="font-mono" style={{ flex: 1, padding: '6px' }} placeholder="K64-T-882" value={newTicketForm.plate} onChange={(event) => setNewTicketForm((prev) => ({ ...prev, plate: event.target.value }))} />
-                            <button style={{ padding: '6px 10px', background: '#64748b', color: 'white', border: 'none', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>ANPR</button>
-                        </div>
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Najava / Narudžba (Opciono)</label>
-                        <select
-                            style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                            value={selectedAnnouncementId}
-                            onChange={(event) => setSelectedAnnouncementId(event.target.value)}
-                        >
-                            <option value="">- Bez najave -</option>
-                            {announcements.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                    {a.code || a.id} — {a.material?.code || '-'} — {a.truck || 'bez tablica'}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>
-                            {newTicketForm.transactionType === 'OUT' ? 'Kupac / Partner *' : 'Dobavljač / Partner *'}
-                        </label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px', marginTop: '4px' }}>
-                            <select
-                                style={{ width: '100%', padding: '6px' }}
-                                value={newTicketForm.supplierId}
-                                onChange={(event) => setNewTicketForm((prev) => ({ ...prev, supplierId: event.target.value }))}
-                            >
-                                <option value="">- Odaberi firmu -</option>
-                                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                            <button
-                                type="button"
-                                className="btn-primary"
-                                style={{ padding: '6px 10px', fontSize: '11px' }}
-                                onClick={() => setCreatePartnerOpen(true)}
-                            >
-                                + Nova firma
-                            </button>
-                        </div>
-                    </div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tip Transakcije *</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={newTicketForm.transactionType} onChange={(event) => setNewTicketForm((prev) => ({ ...prev, transactionType: event.target.value }))}><option value="IN">ULAZ (Prijem Materijala)</option><option value="OUT">IZLAZ (Prodaja)</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Materijal *</label>
-                        <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                            <button type="button" onClick={() => setMaterialPickerOpen(true)} style={{ flex: 1, padding: '6px', textAlign: 'left', border: '1px solid var(--border-color)', background: selectedMaterial ? '#f8fafc' : '#fff', cursor: 'pointer' }}>
-                                {selectedMaterial ? formatPickedMaterial(selectedMaterial) : 'Odaberi materijal...'}
-                            </button>
-                            <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px' }} onClick={() => setMaterialPickerOpen(true)}>Pretraži</button>
-                        </div>
-                    </div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Varijanta / Kvalitet</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>Auto prema inspekciji</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Ugovor</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={newTicketForm.contractId} onChange={(event) => setNewTicketForm((prev) => ({ ...prev, contractId: event.target.value }))}><option value="">- Spot (Bez Ugovora) -</option>{contracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.code || contract.id}</option>)}</select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Vozač / Kontakt</label><input type="text" style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={newTicketForm.driver} onChange={(event) => setNewTicketForm((prev) => ({ ...prev, driver: event.target.value }))} /></div>
+            <datalist id="gate-known-plates">
+                {knownPlates.map((plate) => <option key={plate} value={plate} />)}
+            </datalist>
+            <datalist id="gate-known-drivers">
+                {knownDrivers.map((driver) => <option key={driver} value={driver} />)}
+            </datalist>
+            <datalist id="gate-supplier-options">
+                {supplierLookupOptions.map((option) => <option key={option.id} value={option.label} />)}
+            </datalist>
+            <datalist id="gate-announcement-options">
+                {announcementLookupOptions.map((option) => <option key={option.id} value={option.label} />)}
+            </datalist>
+
+            {/* ---------- Modal: lista vaganja ---------- */}
+            <Modal open={listModalOpen} onClose={() => setListModalOpen(false)} title="Lista vaganja" width={720}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '12px', fontSize: FS.small, fontWeight: 700 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        Od
+                        <input type="date" value={listDateFrom} onChange={(e) => setListDateFrom(e.target.value)} style={{ padding: '6px 8px', fontSize: FS.small }} />
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        Do
+                        <input type="date" value={listDateTo} onChange={(e) => setListDateTo(e.target.value)} style={{ padding: '6px 8px', fontSize: FS.small }} />
+                    </label>
+                    <button type="button" style={styles.btn} onClick={() => { const t = localYmd(); setListDateFrom(t); setListDateTo(t); }}>
+                        Danas
+                    </button>
                 </div>
-                <div style={{ marginTop: '12px', padding: '8px', background: '#eef2ff', border: '1px solid var(--primary-color)', fontSize: '11px' }}>
-                    ℹ️ Kamion će biti upućen na vagu za PRVO VAGANJE ({newTicketForm.transactionType === 'OUT' ? 'Tara' : 'Bruto'}).
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setNewTicketOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px' }} onClick={handleCreateTicket}>REGISTRUJ & POŠALJI NA VAGU →</button>
+                <div style={{ maxHeight: '55vh', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                    {tickets.map((ticket) => {
+                        const st = String(ticket.status || '').toLowerCase();
+                        const rowBg = selectedTicketId === ticket.id
+                            ? '#dcfce7'
+                            : st === 'zatvoren' ? '#ecfdf5'
+                                : (st === 'otkazan' || st === 'storniran') ? '#fef2f2' : '#fff';
+                        const orderCode = contracts.find((c) => c.id === ticket.contractId)?.code;
+                        return (
+                            <div
+                                key={ticket.id}
+                                onClick={() => { goToTicket(ticket.id); setListModalOpen(false); }}
+                                style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', background: rowBg, fontSize: FS.body }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                                    <span>{ticket.code || ticket.id}</span>
+                                    <span style={{ fontSize: FS.small, color: '#64748b' }}>{ticket.type} · {ticket.status || '-'}</span>
+                                </div>
+                                <div style={{ fontSize: FS.small, marginTop: '3px' }}>
+                                    {ticket.supplier?.name || '-'} | {ticket.driver || '-'} | {ticket.plate || '-'}
+                                    {orderCode ? ` | Narudžba: ${orderCode}` : ''}
+                                </div>
+                                <div style={{ fontSize: FS.small, color: '#64748b', marginTop: '2px', fontWeight: 700 }}>
+                                    {ticket.material?.code || '-'} - {ticket.material?.name || '-'}
+                                </div>
+                                <div className="font-mono font-bold" style={{ fontSize: FS.small, marginTop: '4px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px' }}>
+                                    <span>TARA: {Number(ticket.tare || 0).toLocaleString()}</span>
+                                    <span>BRUTO: {Number(ticket.gross || 0).toLocaleString()}</span>
+                                    <span>NETO: {Number(ticket.net || 0).toLocaleString()}</span>
+                                </div>
+                            </div>
+                        );
+                    })}
+                    {!tickets.length && <div style={{ padding: '18px', color: '#64748b', fontSize: FS.body }}>Nema vaganja u izabranom periodu.</div>}
                 </div>
             </Modal>
 
-            <MaterialPicker open={materialPickerOpen} onClose={() => setMaterialPickerOpen(false)} onSelect={({ material }) => setSelectedMaterial(material)} />
-            <MaterialPicker open={inspectionMaterialPickerOpen} onClose={() => setInspectionMaterialPickerOpen(false)} onSelect={({ material }) => setInspectionMaterial(material)} />
-            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title="Nova firma / partner" width={520}>
-                <div style={{ display: 'grid', gap: '10px' }}>
+            {/* ---------- Modal: zatvori vaganje ---------- */}
+            <Modal open={completeOpen} onClose={() => setCompleteOpen(false)} title="Zatvori vaganje" width={560}>
+                <div style={{ display: 'grid', gap: '14px', fontSize: FS.body }}>
+                    {activeTicket?.contractId && (
+                        <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: '6px', fontSize: FS.small }}>
+                            Narudžba: <b>{contracts.find((c) => c.id === activeTicket.contractId)?.code || '-'}</b> — količina će biti
+                            {activeTicket.type === 'OUT' ? ' skinuta sa isporuke' : ' evidentirana kao primljena'}.
+                        </div>
+                    )}
                     <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Naziv firme *</label>
-                        <input
-                            type="text"
-                            style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                            value={newPartnerForm.name}
-                            onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, name: event.target.value }))}
-                        />
+                        <label style={styles.label}>Vozač za štampu (opciono)</label>
+                        <input list="gate-known-drivers" value={closeDriverName} onChange={(e) => setCloseDriverName(e.target.value)} style={styles.input} />
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    {activeTicket?.type !== 'OUT' && (
                         <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Grad</label>
+                            <label style={styles.label}>LOT dodjela (skladište)</label>
+                            <select value={closeLocation} onChange={(e) => setCloseLocation(e.target.value)} style={styles.input}>
+                                <option>Otvoreni lager C</option>
+                                <option>Hala 1 - Sektor A</option>
+                                <option>Hala 2 - Sektor D</option>
+                            </select>
+                        </div>
+                    )}
+                    {activeTicket?.type === 'OUT' && (
+                        <div>
+                            <label style={styles.label}>Materijal za sljedeće OUT vaganje</label>
+                            <select value={nextOutboundMaterialId} onChange={(e) => setNextOutboundMaterialId(e.target.value)} style={styles.input}>
+                                <option value="">- Materijal -</option>
+                                {materials.map((m) => <option key={m.id} value={m.id}>{m.code} - {m.name}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input type="checkbox" checked={printWeighSlip} onChange={(e) => setPrintWeighSlip(e.target.checked)} />
+                        Štampaj vagarski list
+                    </label>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '18px' }}>
+                    <button type="button" style={styles.btn} onClick={() => setCompleteOpen(false)}>Odustani</button>
+                    {activeTicket?.type === 'OUT' && (
+                        <button type="button" style={{ ...styles.btnPrimary, opacity: closeSubmitting ? 0.7 : 1 }} disabled={closeSubmitting} onClick={() => handleCloseTicket({ continueOutbound: true })}>
+                            {closeSubmitting ? 'Obrada...' : 'Zatvori & novo vaganje'}
+                        </button>
+                    )}
+                    <button type="button" style={{ ...styles.btnGreen, opacity: closeSubmitting ? 0.7 : 1 }} disabled={closeSubmitting} onClick={() => handleCloseTicket()}>
+                        {closeSubmitting ? 'Obrada...' : 'Zatvori & štampaj'}
+                    </button>
+                </div>
+            </Modal>
+
+            <MaterialPicker
+                open={materialPickerOpen}
+                onClose={() => setMaterialPickerOpen(false)}
+                onSelect={({ material }) => {
+                    if (materialPickerTarget === 'ticketDetails') {
+                        const backendMaterial = resolveBackendMaterial(materials, material);
+                        setTicketDraft((prev) => ({ ...prev, materialId: backendMaterial?.id || material?.id || '' }));
+                    } else {
+                        setSelectedMaterial(material);
+                    }
+                }}
+                onMaterialCreated={() => refreshMaterials().catch(() => null)}
+            />
+
+            <Modal open={createAnnouncementOpen} onClose={() => setCreateAnnouncementOpen(false)} title="Nova najava / narudžba" width={560}>
+                <div style={{ display: 'grid', gap: '12px', fontSize: FS.body }}>
+                    <div>
+                        <label style={styles.label}>Materijal</label>
+                        <div style={{ ...styles.input, background: '#f8fafc' }}>
+                            {selectedMaterial ? formatPickedMaterial(selectedMaterial) : '-'}
+                        </div>
+                    </div>
+                    <div>
+                        <label style={styles.label}>Komitent *</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                            <input
+                                list="gate-supplier-options"
+                                value={newAnnouncementSupplierQuery}
+                                placeholder="Odaberi ili upiši komitenta"
+                                onChange={(event) => {
+                                    const value = event.target.value;
+                                    setNewAnnouncementSupplierQuery(value);
+                                    const resolved = resolveLookupId(value, supplierLookupOptions);
+                                    setNewAnnouncementForm((prev) => ({ ...prev, supplierId: resolved || '' }));
+                                }}
+                                style={styles.input}
+                            />
+                            <button type="button" style={styles.btn} onClick={() => openCreatePartnerModal('newAnnouncement')}>+ Novi</button>
+                        </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                            <label style={styles.label}>Planirano KG *</label>
+                            <input
+                                type="number" min="0" step="0.01"
+                                value={newAnnouncementForm.expectedKg}
+                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedKg: event.target.value }))}
+                                style={styles.input}
+                            />
+                        </div>
+                        <div>
+                            <label style={styles.label}>Tablice (opciono)</label>
+                            <input
+                                list="gate-known-plates"
+                                value={newAnnouncementForm.truck}
+                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, truck: event.target.value }))}
+                                style={styles.input}
+                            />
+                        </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                            <label style={styles.label}>Datum najave</label>
+                            <input
+                                type="date"
+                                value={newAnnouncementForm.expectedDate}
+                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, expectedDate: event.target.value }))}
+                                style={styles.input}
+                            />
+                        </div>
+                        <div>
+                            <label style={styles.label}>Status</label>
                             <input
                                 type="text"
-                                style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                value={newPartnerForm.city}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, city: event.target.value }))}
-                            />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>JIB</label>
-                            <input
-                                type="text"
-                                style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                value={newPartnerForm.jib}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, jib: event.target.value }))}
+                                value={newAnnouncementForm.status}
+                                onChange={(event) => setNewAnnouncementForm((prev) => ({ ...prev, status: event.target.value }))}
+                                style={styles.input}
                             />
                         </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' }}>
+                    <button type="button" style={styles.btn} onClick={() => setCreateAnnouncementOpen(false)}>Odustani</button>
+                    <button type="button" style={styles.btnPrimary} onClick={handleCreateAnnouncement}>Sačuvaj najavu</button>
+                </div>
+            </Modal>
+
+            <Modal open={createPartnerOpen} onClose={() => setCreatePartnerOpen(false)} title="Novi komitent / partner" width={520}>
+                <div style={{ display: 'grid', gap: '12px', fontSize: FS.body }}>
+                    <div>
+                        <label style={styles.label}>Naziv komitenta *</label>
+                        <input type="text" style={styles.input} value={newPartnerForm.name} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, name: event.target.value }))} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                         <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Telefon</label>
-                            <input
-                                type="text"
-                                style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                value={newPartnerForm.phone}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, phone: event.target.value }))}
-                            />
+                            <label style={styles.label}>Grad</label>
+                            <input type="text" style={styles.input} value={newPartnerForm.city} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, city: event.target.value }))} />
                         </div>
                         <div>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>Email</label>
-                            <input
-                                type="email"
-                                style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                                value={newPartnerForm.email}
-                                onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, email: event.target.value }))}
-                            />
+                            <label style={styles.label}>JIB</label>
+                            <input type="text" style={styles.input} value={newPartnerForm.jib} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, jib: event.target.value }))} />
                         </div>
                     </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                        <input
-                            type="checkbox"
-                            checked={newPartnerForm.createCustomerMirror}
-                            onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, createCustomerMirror: event.target.checked }))}
-                        />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                            <label style={styles.label}>Telefon</label>
+                            <input type="text" style={styles.input} value={newPartnerForm.phone} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, phone: event.target.value }))} />
+                        </div>
+                        <div>
+                            <label style={styles.label}>Email</label>
+                            <input type="email" style={styles.input} value={newPartnerForm.email} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, email: event.target.value }))} />
+                        </div>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input type="checkbox" checked={newPartnerForm.createCustomerMirror} onChange={(event) => setNewPartnerForm((prev) => ({ ...prev, createCustomerMirror: event.target.checked }))} />
                         Kreiraj i kao kupca (isti partner za ulaz i izlaz)
                     </label>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setCreatePartnerOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px' }} onClick={handleCreatePartner}>SAČUVAJ FIRMU</button>
-                </div>
-            </Modal>
-
-            {/* MODAL: 1. Vaganje */}
-            <Modal open={firstWeighOpen} onClose={() => setFirstWeighOpen(false)} title={`1. Vaganje — ${isOutboundFlow ? 'Tara Masa' : 'Bruto Masa'}`} width={550}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Tiket:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{activeTicket?.code || '-'}</span></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Tablice:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{activeTicket?.plate || '-'}</span></div>
-                    </div>
-                    <div style={{ background: '#000', padding: '20px', textAlign: 'center', border: '2px solid #334155' }}>
-                        <div style={{ color: '#10b981', fontSize: '10px', fontWeight: 700, letterSpacing: '2px', marginBottom: '8px' }}>VAGA LIVE — STABILNO</div>
-                        <div className="scada-readout" style={{ color: '#10b981', fontSize: '48px', fontWeight: 'bold' }}>{weightText}</div>
-                    </div>
-                    <div style={{ padding: '8px', background: '#fffbeb', border: '1px solid #f59e0b', fontSize: '12px' }}>⚠️ Provjerite da je kamion potpuno na platformi vage i da je vaga STABILNA prije odobravanja.</div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setFirstWeighOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px', background: '#1e40af' }} onClick={handleFirstWeigh}>
-                        {isOutboundFlow ? `ODOBRI TARU: ${weightText} ✓` : `ODOBRI BRUTO: ${weightText} ✓`}
-                    </button>
-                </div>
-            </Modal>
-
-            {/* MODAL: Inspekcija */}
-            <Modal open={inspectionOpen} onClose={() => setInspectionOpen(false)} title="Inspekcija Materijala" width={600}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12px' }}>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Tiket:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{activeTicket?.code || '-'}</span></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Deklarirano:</span> <span style={{ fontWeight: 600 }}>{activeTicket?.material?.code || '-'}</span></div>
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Kontrolor *</label>
-                        <select
-                            style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                            value={inspectionWorkerId}
-                            onChange={(event) => setInspectionWorkerId(event.target.value)}
-                        >
-                            {inspectionWorkers.length === 0 && <option value="">Nema definisanih kontrolora</option>}
-                            {inspectionWorkers.map((worker) => (
-                                <option key={worker.id} value={worker.id}>
-                                    {worker.name} ({worker.code})
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Stvarni Materijal (Reklasifikacija)</label>
-                        <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                            <button type="button" onClick={() => setInspectionMaterialPickerOpen(true)} style={{ flex: 1, padding: '6px', textAlign: 'left', border: '1px solid var(--border-color)', background: inspectionMaterial ? '#f8fafc' : '#fff', cursor: 'pointer' }}>
-                                {inspectionMaterial ? formatPickedMaterial(inspectionMaterial) : 'FE-E1 — BEZ PROMJENE'}
-                            </button>
-                            <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px' }} onClick={() => setInspectionMaterialPickerOpen(true)}>Pretraži</button>
-                        </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Potreban XRF?</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>Ne</option><option>Da — Zakaži Analizu</option></select></div>
-                        <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Fotografije Materijala</label><button style={{ display: 'block', width: '100%', padding: '6px', marginTop: '4px', border: '1px dashed var(--border-color)', background: '#f8fafc', cursor: 'pointer' }}>📷 Dodaj Sliku</button></div>
-                    </div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Napomena Kontrolora</label><textarea style={{ width: '100%', padding: '6px', marginTop: '4px', resize: 'vertical', minHeight: '50px' }} placeholder="Slobodan tekst..."></textarea></div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setInspectionOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px', background: '#b45309' }} onClick={handleInspection}>POTVRDI INSPEKCIJU</button>
-                </div>
-            </Modal>
-
-            {/* MODAL: XRF Zahtjev */}
-            <Modal open={xrfOpen} onClose={() => setXrfOpen(false)} title="Zahtjev za XRF Hemijsku Analizu" width={500}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Tiket *</label><select className="font-mono" style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={activeTicket?.id || ''} disabled><option value={activeTicket?.id || ''}>{activeTicket?.code || '-'}</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Razlog XRF Analize</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>Rutinska provjera</option><option>Sumnja na reklasifikaciju</option><option>Zahtjev kupca</option><option>Obojeni metal — obavezno</option></select></div>
-                    <div><label style={{ fontSize: '11px', fontWeight: 700 }}>Prioritet</label><select style={{ width: '100%', padding: '6px', marginTop: '4px' }}><option>Normalan</option><option>Hitno (Kamion čeka)</option></select></div>
-                    <div style={{ padding: '8px', background: '#eef2ff', border: '1px solid var(--primary-color)', fontSize: '11px' }}>
-                        📡 Zahtjev će biti poslan kontroloru sa XRF pištoljem. Rezultate ručno unosi u /yard/xrf ekran.
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setXrfOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px' }}>POŠALJI ZAHTJEV</button>
-                </div>
-            </Modal>
-
-            {/* MODAL: 2. Vaganje */}
-            <Modal open={secondWeighOpen} onClose={() => setSecondWeighOpen(false)} title={`2. Vaganje — ${isOutboundFlow ? 'Bruto Masa' : 'Tara Masa'}`} width={620}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Tiket:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{activeTicket?.code || '-'}</span></div>
-                        <div>
-                            <span style={{ color: 'var(--text-muted)' }}>{isOutboundFlow ? 'Tara (1. vag.):' : 'Bruto (1. vag.):'}</span>{' '}
-                            <span className="font-mono" style={{ fontWeight: 700 }}>
-                                {Math.round((isOutboundFlow ? activeTicket?.tare : activeTicket?.gross) || 0).toLocaleString()} {scaleConfig.unit}
-                            </span>
-                        </div>
-                    </div>
-                    <div style={{ background: '#000', padding: '20px', textAlign: 'center', border: '2px solid #334155' }}>
-                        <div style={{ color: '#10b981', fontSize: '10px', fontWeight: 700, letterSpacing: '2px', marginBottom: '8px' }}>VAGA LIVE — STABILNO</div>
-                        <div className="scada-readout" style={{ color: '#10b981', fontSize: '48px', fontWeight: 'bold' }}>{tareWeightText}</div>
-                    </div>
-                    {isTareFallback && (
-                        <div style={{ padding: '8px', background: '#fffbeb', border: '1px solid #f59e0b', fontSize: '11px', color: '#92400e' }}>
-                            Live signal nije dostupan, korišten je zadnji poznati tare podatak sa tiketa.
-                        </div>
-                    )}
-                    <div style={{ background: '#f8fafc', padding: '12px', border: '1px solid var(--border-color)', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
-                        <div><div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>BRUTO</div><div className="font-mono" style={{ fontWeight: 700 }}>{Math.round((isOutboundFlow ? Number(liveWeight || 0) : Number(activeTicket?.gross || 0))).toLocaleString()}</div></div>
-                        <div><div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>TARA</div><div className="font-mono" style={{ fontWeight: 700 }}>{Math.round((isOutboundFlow ? Number(activeTicket?.tare || 0) : Number(tareWeight || 0))).toLocaleString()}</div></div>
-                        <div><div style={{ fontSize: '10px', color: '#b45309' }}>AMBALAŽA ODBITAK</div><div className="font-mono" style={{ fontWeight: 700, color: '#b45309' }}>{Number(totalPackagingKg || 0).toLocaleString()} KG</div></div>
-                        <div style={{ background: '#eef2ff', padding: '4px' }}><div style={{ fontSize: '10px', color: 'var(--primary-color)' }}>NETO (PREVIEW)</div><div className="font-mono" style={{ fontWeight: 700, fontSize: '16px', color: 'var(--primary-color)' }}>{Math.max(0, (isOutboundFlow ? Number(liveWeight || 0) : Number(activeTicket?.gross || 0)) - (isOutboundFlow ? Number(activeTicket?.tare || 0) : Number(tareWeight || 0)) - Number(totalPackagingKg || 0)).toLocaleString()}</div></div>
-                    </div>
-                    <div style={{ background: '#fff', padding: '12px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '8px' }}>Skidanje ambalaže (ručno)</div>
-                        <div style={{ display: 'grid', gap: '6px' }}>
-                            {packagingRows.map((row) => (
-                                <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 120px auto', gap: '6px' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Vrsta ambalaže (npr. 3x palete)"
-                                        value={row.type}
-                                        onChange={(event) => updatePackagingRow(row.id, 'type', event.target.value)}
-                                        style={{ padding: '6px' }}
-                                    />
-                                    <input
-                                        type="number"
-                                        placeholder="KG"
-                                        value={row.kg}
-                                        onChange={(event) => updatePackagingRow(row.id, 'kg', event.target.value)}
-                                        style={{ padding: '6px', textAlign: 'right' }}
-                                    />
-                                    <button type="button" onClick={() => removePackagingRow(row.id)} style={{ padding: '6px 10px', border: '1px solid var(--border-color)', background: '#f8fafc' }}>Ukloni</button>
-                                </div>
-                            ))}
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                            <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px' }} onClick={addPackagingRow}>+ Dodaj ambalažu</button>
-                            <div className="font-mono" style={{ fontSize: '12px', fontWeight: 700 }}>Ukupno odbitak: {Number(totalPackagingKg || 0).toLocaleString()} KG</div>
-                        </div>
-                    </div>
-                    <div style={{ background: '#f8fafc', padding: '12px', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between' }}>
-                        <div><div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>CIJENA/KG</div><div className="font-mono" style={{ fontWeight: 700 }}>0.30 BAM</div></div>
-                        <div style={{ textAlign: 'right' }}><div style={{ fontSize: '10px', color: 'var(--danger-color)' }}>ZA ISPLATU</div><div className="font-mono" style={{ fontWeight: 700, fontSize: '20px', color: 'var(--danger-color)' }}>3,644.55 BAM</div></div>
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setSecondWeighOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    <button className="btn-primary" style={{ padding: '8px 20px', background: '#15803d' }} onClick={handleSecondWeigh}>
-                        {isOutboundFlow ? 'POTVRDI BRUTO & ZAVRŠI VAGANJE ✓' : 'POTVRDI TARU & ZAVRŠI VAGANJE ✓'}
-                    </button>
-                </div>
-            </Modal>
-
-            {/* MODAL: Zatvori Tiket */}
-            <Modal open={completeOpen} onClose={() => setCompleteOpen(false)} title="Zatvori Tiket & Štampaj" width={500}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {activeTicket?.type === 'OUT' && (
-                        <div style={{ padding: '8px', background: '#fff7ed', border: '1px solid #fdba74', fontSize: '12px', color: '#9a3412' }}>
-                            IZLAZ tiket: zatvaranje će umanjiti stanje robe za neto količinu.
-                        </div>
-                    )}
-                    {activeTicket?.type === 'OUT' && (
-                        <div style={{ padding: '10px', border: '1px solid #cbd5e1', background: '#f8fafc', display: 'grid', gap: '8px' }}>
-                            <div style={{ fontSize: '12px', fontWeight: 700 }}>Nakon zatvaranja otvori novo vaganje</div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px' }}>
-                                <label style={{ fontSize: '11px', fontWeight: 600 }}>Materijal za sljedeće vaganje</label>
-                                <select
-                                    value={nextOutboundMaterialId}
-                                    onChange={(event) => setNextOutboundMaterialId(event.target.value)}
-                                    style={{ padding: '6px' }}
-                                >
-                                    <option value="">- Materijal -</option>
-                                    {materials.map((material) => (
-                                        <option key={material.id} value={material.id}>
-                                            {material.code} - {material.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="font-mono" style={{ fontSize: '12px', color: '#475569' }}>
-                                Nova OUT stavka će početi sa TAROM = trenutni BRUTO ovog tiketa.
-                            </div>
-                        </div>
-                    )}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Tiket:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{activeTicket?.code || '-'}</span></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Dobavljač:</span> <span style={{ fontWeight: 600 }}>{activeTicket?.supplier?.name || '-'}</span></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Materijal:</span> <span style={{ fontWeight: 600 }}>{activeTicket?.material?.code || '-'}</span></div>
-                        <div><span style={{ color: 'var(--text-muted)' }}>Neto:</span> <span className="font-mono" style={{ fontWeight: 700 }}>{Number(activeTicket?.net || 0).toLocaleString()} KG</span></div>
-                    </div>
-                <div style={{ fontSize: '12px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: 700 }}>Vozač (za štampu)</label>
-                    <input
-                        type="text"
-                        style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                        value={closeDriverName}
-                        onChange={(event) => setCloseDriverName(event.target.value)}
-                        placeholder="Unesi ime vozača"
-                    />
-                    </div>
-                    {activeTicket?.type !== 'OUT' && (
-                        <div style={{ fontSize: '12px' }}>
-                            <label style={{ fontSize: '11px', fontWeight: 700 }}>LOT Dodjela (Skladište)</label>
-                            <select style={{ width: '100%', padding: '6px', marginTop: '4px' }} value={closeLocation} onChange={(event) => setCloseLocation(event.target.value)}><option>Otvoreni lager C</option><option>Hala 1 - Sektor A</option><option>Hala 2 - Sektor D</option></select>
-                        </div>
-                    )}
-                    <div style={{ fontSize: '12px' }}>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Inspektor</label>
-                        <select
-                            style={{ width: '100%', padding: '6px', marginTop: '4px' }}
-                            value={inspectionWorkerId}
-                            onChange={(event) => setInspectionWorkerId(event.target.value)}
-                        >
-                            {inspectionWorkers.length === 0 && <option value="">Nema definisanih kontrolora</option>}
-                            {inspectionWorkers.map((worker) => (
-                                <option key={worker.id} value={worker.id}>
-                                    {worker.name} ({worker.code})
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div style={{ fontSize: '12px' }}>
-                        <label style={{ fontSize: '11px', fontWeight: 700 }}>Štampaj Dokument</label>
-                        <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <label>
-                                <input
-                                    type="checkbox"
-                                    checked={printWeighSlip}
-                                    onChange={(event) => setPrintWeighSlip(event.target.checked)}
-                                /> Prijemni List (Vagarski Tiket)
-                            </label>
-                            <label><input type="checkbox" defaultChecked /> Otkupni Blok / Samofaktura</label>
-                            <label><input type="checkbox" /> Potvrda o Preuzimanju Otpada</label>
-                        </div>
-                    </div>
-                    <div style={{ padding: '8px', background: '#dcfce7', border: '1px solid #10b981', fontSize: '12px', fontWeight: 600, color: '#15803d' }}>
-                        {activeTicket?.type === 'OUT'
-                            ? '✓ Sve provjere OK. Stanje robe će biti automatski umanjeno. Kamion se može pustiti.'
-                            : '✓ Sve provjere OK. LOT će biti automatski kreiran. Kamion se može pustiti.'}
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                    <button onClick={() => setCompleteOpen(false)} style={{ padding: '8px 20px', background: '#f1f5f9', border: '1px solid var(--border-color)', cursor: 'pointer' }}>ODUSTANI</button>
-                    {activeTicket?.type === 'OUT' && (
-                        <button className="btn-primary" disabled={closeSubmitting} style={{ padding: '8px 20px', background: '#1d4ed8', opacity: closeSubmitting ? 0.7 : 1, cursor: closeSubmitting ? 'not-allowed' : 'pointer' }} onClick={() => handleCloseTicket({ continueOutbound: true })}>
-                            {closeSubmitting ? 'OBRADA...' : '✅ ZATVORI & NOVO VAGANJE'}
-                        </button>
-                    )}
-                    <button className="btn-primary" disabled={closeSubmitting} style={{ padding: '8px 20px', opacity: closeSubmitting ? 0.7 : 1, cursor: closeSubmitting ? 'not-allowed' : 'pointer' }} onClick={() => handleCloseTicket()}>{closeSubmitting ? 'OBRADA...' : '🖨️ ZATVORI & ODKUCAJ'}</button>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
+                    <button type="button" style={styles.btn} onClick={() => setCreatePartnerOpen(false)}>Odustani</button>
+                    <button type="button" style={styles.btnPrimary} onClick={handleCreatePartner}>Sačuvaj komitenta</button>
                 </div>
             </Modal>
         </div>

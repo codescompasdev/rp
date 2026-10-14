@@ -18,7 +18,7 @@ export default function WalkInPOS() {
     const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
     const [selectedMaterial, setSelectedMaterial] = useState(null);
     const [materials, setMaterials] = useState([]);
-    const [weightKg, setWeightKg] = useState('45.5');
+    const [weightKg, setWeightKg] = useState('');
     const [pricePerKg, setPricePerKg] = useState('');
     const [sellerName, setSellerName] = useState('');
     const [sellerDoc, setSellerDoc] = useState('');

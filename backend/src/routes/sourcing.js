@@ -5,6 +5,13 @@ const router = Router();
 const prisma = new PrismaClient();
 router.use(authMiddleware);
 
+const CONTRACT_INCLUDE = {
+  supplier: true,
+  customer: true,
+  material: true,
+  items: { include: { material: true } },
+};
+
 router.get('/suppliers', async (req, res) => {
   const { search } = req.query;
   const where = {};
@@ -85,8 +92,10 @@ router.put('/customers/:id', async (req, res) => {
 });
 
 router.get('/contracts', async (req, res) => {
+  const { direction } = req.query;
   const data = await prisma.contract.findMany({
-    include: { supplier: true, material: true },
+    where: direction ? { direction: String(direction) } : {},
+    include: CONTRACT_INCLUDE,
     orderBy: { code: 'desc' },
   });
   res.json({ data });
@@ -95,27 +104,91 @@ router.get('/contracts', async (req, res) => {
 router.get('/contracts/:id', async (req, res) => {
   const data = await prisma.contract.findUnique({
     where: { id: req.params.id },
-    include: { supplier: true, material: true },
+    include: CONTRACT_INCLUDE,
   });
   if (!data) return res.status(404).json({ error: 'Not found' });
   res.json({ data });
 });
 
+function buildItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .filter((i) => i?.materialId)
+    .map((i) => ({
+      materialId: i.materialId,
+      qtyKg: i.qtyKg === null || i.qtyKg === undefined || i.qtyKg === '' ? null : Number(i.qtyKg),
+      pricePerKg: i.pricePerKg ? Number(i.pricePerKg) : null,
+    }));
+}
+
 router.post('/contracts', async (req, res) => {
-  const code = `UGV-2026-${String(await prisma.contract.count() + 1).padStart(3, '0')}`;
-  const { supplierId, materialId, ...rest } = req.body;
+  const {
+    direction = 'BUY', partnerId, items, qtyMode = 'PER_MATERIAL',
+    totalQtyKg, tolerance, ...rest
+  } = req.body;
+
+  const cleanItems = buildItems(items);
+  if (!partnerId || !cleanItems.length) {
+    return res.status(400).json({ error: 'Partner i bar jedan materijal su obavezni.' });
+  }
+  if (qtyMode === 'TOTAL' && !(Number(totalQtyKg) > 0)) {
+    return res.status(400).json({ error: 'Ukupna količina narudžbe je obavezna.' });
+  }
+  if (qtyMode === 'PER_MATERIAL' && cleanItems.some((i) => !(i.qtyKg > 0))) {
+    return res.status(400).json({ error: 'Svaki materijal mora imati količinu.' });
+  }
+
+  const code = `NAR-2026-${String(await prisma.contract.count() + 1).padStart(3, '0')}`;
   const data = await prisma.contract.create({
-    data: { ...rest, code, supplierId, materialId },
-    include: { supplier: true, material: true },
+    data: {
+      code,
+      direction,
+      qtyMode,
+      totalQtyKg: qtyMode === 'TOTAL' ? Number(totalQtyKg) : null,
+      tolerance: tolerance !== undefined && tolerance !== '' ? Number(tolerance) : null,
+      supplierId: direction === 'BUY' ? partnerId : null,
+      customerId: direction === 'SELL' ? partnerId : null,
+      formula: rest.formula || null,
+      paymentTerms: rest.paymentTerms || null,
+      period: rest.period || null,
+      status: rest.status || 'Aktivan',
+      startDate: rest.startDate ? new Date(rest.startDate) : null,
+      endDate: rest.endDate ? new Date(rest.endDate) : null,
+      items: {
+        create: qtyMode === 'TOTAL'
+          ? cleanItems.map((i) => ({ ...i, qtyKg: null }))
+          : cleanItems,
+      },
+    },
+    include: CONTRACT_INCLUDE,
   });
   res.status(201).json({ data });
 });
 
 router.put('/contracts/:id', async (req, res) => {
-  const data = await prisma.contract.update({
-    where: { id: req.params.id },
-    data: req.body,
-    include: { supplier: true, material: true },
+  const { items, partnerId, direction, ...rest } = req.body;
+  const data = await prisma.$transaction(async (tx) => {
+    if (Array.isArray(items)) {
+      const clean = buildItems(items);
+      const keepIds = clean.map((i) => i.materialId);
+      await tx.contractItem.deleteMany({
+        where: { contractId: req.params.id, materialId: { notIn: keepIds } },
+      });
+      for (const it of clean) {
+        const existing = await tx.contractItem.findFirst({
+          where: { contractId: req.params.id, materialId: it.materialId },
+        });
+        if (existing) {
+          await tx.contractItem.update({ where: { id: existing.id }, data: { qtyKg: it.qtyKg, pricePerKg: it.pricePerKg } });
+        } else {
+          await tx.contractItem.create({ data: { ...it, contractId: req.params.id } });
+        }
+      }
+    }
+    return tx.contract.update({
+      where: { id: req.params.id },
+      data: rest,
+      include: CONTRACT_INCLUDE,
+    });
   });
   res.json({ data });
 });

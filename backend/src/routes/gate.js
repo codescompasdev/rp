@@ -117,6 +117,7 @@ async function voidInClosedTicketInTx(tx, ticket, req) {
       movementPrefix: 'INV-STORNO',
     });
   }
+  await applyContractProgress(tx, ticket.contractId, ticket.materialId, net, -1);
   await tx.lot.updateMany({
     where: { ticketId: ticket.id },
     data: { status: 'Storniran' },
@@ -144,6 +145,7 @@ async function voidOutClosedTicketInTx(tx, ticket, req) {
       movementPrefix: 'INV-STORNO-IN',
     });
   }
+  await applyContractProgress(tx, ticket.contractId, ticket.materialId, net, -1);
   return tx.weighTicket.update({
     where: { id: ticket.id },
     data: { status: 'Storniran' },
@@ -219,6 +221,54 @@ async function resolveMaterialVariantId(tx, materialId, preferredVariantId = nul
     select: { id: true },
   });
   return created.id;
+}
+
+// sign = 1 (zatvaranje tiketa), -1 (storno)
+async function applyContractProgress(tx, contractId, materialId, kg, sign = 1) {
+  const qty = toNumber(kg, 0);
+  if (!contractId || qty <= 0) return;
+  const contract = await tx.contract.findUnique({
+    where: { id: contractId },
+    include: { items: true },
+  });
+  if (!contract) return;
+
+  const delta = sign * qty;
+  const item = contract.items.find((i) => i.materialId === materialId);
+  if (item) {
+    await tx.contractItem.update({
+      where: { id: item.id },
+      data: { doneKg: { increment: delta } },
+    });
+  }
+  const updated = await tx.contract.update({
+    where: { id: contractId },
+    data: { doneKg: { increment: delta } },
+    include: { items: true },
+  });
+
+  let finished = false;
+  if (updated.qtyMode === 'TOTAL') {
+    finished = toNumber(updated.doneKg) >= toNumber(updated.totalQtyKg);
+  } else {
+    const withQty = updated.items.filter((i) => i.qtyKg !== null);
+    finished = withQty.length > 0 && withQty.every((i) => toNumber(i.doneKg) >= toNumber(i.qtyKg));
+  }
+  const nextStatus = finished ? 'Završen' : 'Aktivan';
+  if (updated.status !== nextStatus && ['Aktivan', 'Završen'].includes(updated.status)) {
+    await tx.contract.update({ where: { id: contractId }, data: { status: nextStatus } });
+  }
+}
+
+function assertContractDirection(contract, ticketType) {
+  if (!contract) return;
+  const ok = (contract.direction === 'BUY' && ticketType === 'IN')
+    || (contract.direction === 'SELL' && ticketType === 'OUT');
+  if (!ok) {
+    const err = new Error('Tip tiketa ne odgovara smjeru narudžbe (kupovina=IN, prodaja=OUT).');
+    err.status = 400;
+    throw err;
+  }
 }
 
 function isOwnerRole(role) {
@@ -404,7 +454,12 @@ router.get('/tickets', async (req, res) => {
 router.get('/tickets/:id', async (req, res) => {
   const data = await prisma.weighTicket.findFirst({
     where: { id: req.params.id, ...scopedWhere(req) },
-    include: { supplier: true, material: true, lots: true },
+    include: {
+    supplier: true,
+    material: true,
+    lots: true,
+    contract: { include: { items: { include: { material: true } } } },
+    },
   });
   if (!data) return res.status(404).json({ error: 'Not found' });
   res.json({ data });
@@ -738,9 +793,15 @@ router.post('/tickets/:id/close', async (req, res) => {
         });
       }
 
+      // narudžba: sa tiketa, a ako je nema, iz zahtjeva
+      const contractId = ticket.contractId || req.body.contractId || null;
+
       const closed = await tx.weighTicket.update({
         where: { id: req.params.id },
-        data: { status: req.body.status || 'Zatvoren' },
+        data: {
+          status: req.body.status || 'Zatvoren',
+          ...(contractId && !ticket.contractId ? { contractId } : {}),
+        },
         include: { supplier: true, material: true },
       });
 
@@ -751,6 +812,13 @@ router.post('/tickets/:id/close', async (req, res) => {
 
       if (!isPos && net <= 0) {
         fail('Net weight is zero. Complete second weigh or set net before closing.');
+      }
+
+      // provjera smjera narudžbe (BUY = IN, SELL = OUT)
+      if (contractId && !isPos) {
+        const contract = await tx.contract.findUnique({ where: { id: contractId } });
+        if (!contract) fail('Narudžba nije pronađena.');
+        assertContractDirection(contract, ticket.type);
       }
 
       if (net > 0 && !isPos) {
@@ -765,6 +833,7 @@ router.post('/tickets/:id/close', async (req, res) => {
             ? req.body.outboundLines
                 .map((line) => ({
                   materialId: String(line?.materialId || '').trim(),
+                  materialVariantId: line?.materialVariantId || null,
                   quantityKg: toNumber(line?.quantityKg, 0),
                 }))
                 .filter((line) => line.materialId && line.quantityKg > 0)
@@ -788,6 +857,7 @@ router.post('/tickets/:id/close', async (req, res) => {
                 movementType: 'sale',
                 movementPrefix: 'INV-OUT',
               });
+              await applyContractProgress(tx, contractId, line.materialId, line.quantityKg, 1);
             }
           } else {
             const ticketVariantId = await resolveMaterialVariantId(tx, ticket.materialId);
@@ -802,6 +872,7 @@ router.post('/tickets/:id/close', async (req, res) => {
               movementType: 'sale',
               movementPrefix: 'INV-OUT',
             });
+            await applyContractProgress(tx, contractId, ticket.materialId, net, 1);
           }
         } else {
           const lotCode = uniqueCode('LOT');
@@ -816,7 +887,7 @@ router.post('/tickets/:id/close', async (req, res) => {
               kg: net,
               location: req.body.location || 'Otvoreni lager C',
               status: 'Na stanju',
-              contractId: req.body.contractId || null,
+              contractId,
               companyId,
             },
           });
@@ -831,6 +902,7 @@ router.post('/tickets/:id/close', async (req, res) => {
             movementType: 'purchase',
             movementPrefix: 'INV-IN',
           });
+          await applyContractProgress(tx, contractId, ticket.materialId, net, 1);
         }
       }
       return closed;
