@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, ClipboardList, Eye, Pencil, Plus } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, ClipboardList, Eye, Pencil, Plus, Undo2 } from 'lucide-react';
 import Modal from '@/components/UI/Modal';
 import MaterialPicker from '@/components/UI/MaterialPicker';
 import PageHeader from '@/components/UI/PageHeader';
@@ -17,7 +17,7 @@ import Alert from '@/components/UI/Alert';
 import { Badge, StatusBadge } from '@/components/UI/Badge';
 import OrderFormFields from '@/components/Orders/OrderFormFields';
 import api from '@/lib/api';
-import { fmtDate, fmtDateTime, fmtKg, fmtNum, fmtWeight, toNum } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtNum, fmtTime, fmtTons, kgToTonsInput, localYmd, toNum, tonsToKg } from '@/lib/format';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
 import {
     buildFormula,
@@ -37,7 +37,7 @@ const EMPTY_FORM = {
     direction: 'BUY',
     partnerId: '',
     qtyMode: 'PER_MATERIAL',
-    totalQtyKg: '',
+    totalQtyT: '',
     tolerance: 5,
     formula: 'LME',
     formulaValue: '',
@@ -48,6 +48,14 @@ const EMPTY_FORM = {
 };
 
 const toIso = (d) => (d ? new Date(d).toISOString() : null);
+
+const nowLocalInput = () => {
+    const d = new Date();
+    return `${localYmd(d)}T${fmtTime(d)}`;
+};
+
+/** "25,34 / 2.000 t" */
+const tonsPair = (doneKg, plannedKg) => `${fmtNum(toNum(doneKg) / 1000, 3)} / ${fmtTons(plannedKg)}`;
 
 const DIRECTION_FILTERS = [
     { value: 'ALL', label: 'Sve' },
@@ -81,9 +89,15 @@ export default function ContractsPage() {
     const [editingContract, setEditingContract] = useState(null);
     const [detailContract, setDetailContract] = useState(null);
     const [detailTickets, setDetailTickets] = useState([]);
+    const [detailTransactions, setDetailTransactions] = useState([]);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [detailError, setDetailError] = useState('');
+    const [txFormOpen, setTxFormOpen] = useState(false);
+    const [txForm, setTxForm] = useState({ date: '', materialId: '', qtyT: '', note: '' });
+    const [txError, setTxError] = useState('');
+    const [txSaving, setTxSaving] = useState(false);
     const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
-    const [items, setItems] = useState([]); // { materialId, label, qtyKg, pricePerKg }
+    const [items, setItems] = useState([]); // { materialId, label, qtyT, pricePerKg }
     const [partnerQuery, setPartnerQuery] = useState('');
     const [createPartnerOpen, setCreatePartnerOpen] = useState(false);
     const [newPartnerName, setNewPartnerName] = useState('');
@@ -205,20 +219,20 @@ export default function ContractsPage() {
             return;
         }
         setFormError('');
-        setItems((prev) => [...prev, { materialId: backend.id, label: formatPickedMaterial(material), qtyKg: '', pricePerKg: null }]);
+        setItems((prev) => [...prev, { materialId: backend.id, label: formatPickedMaterial(material), qtyT: '', pricePerKg: null }]);
     };
 
     const validate = () => {
         if (!formData.partnerId) return `${isBuy ? 'Dobavljač' : 'Kupac'} je obavezan.`;
         if (!items.length) return 'Dodaj bar jedan materijal.';
-        if (formData.qtyMode === 'PER_MATERIAL' && items.some((it) => !(Number(it.qtyKg) > 0))) return 'Unesi količinu (kg) za svaki materijal.';
-        if (formData.qtyMode === 'TOTAL' && !(Number(formData.totalQtyKg) > 0)) return 'Unesi ukupnu količinu narudžbe.';
+        if (formData.qtyMode === 'PER_MATERIAL' && items.some((it) => !(tonsToKg(it.qtyT) > 0))) return 'Unesi količinu (t) za svaki materijal.';
+        if (formData.qtyMode === 'TOTAL' && !(tonsToKg(formData.totalQtyT) > 0)) return 'Unesi ukupnu količinu narudžbe.';
         return '';
     };
 
     const buildItemsPayload = () => items.map((it) => ({
         materialId: it.materialId,
-        qtyKg: formData.qtyMode === 'PER_MATERIAL' ? Number(it.qtyKg) : null,
+        qtyKg: formData.qtyMode === 'PER_MATERIAL' ? tonsToKg(it.qtyT) : null,
         pricePerKg: it.pricePerKg ?? null,
     }));
 
@@ -241,7 +255,7 @@ export default function ContractsPage() {
                 partnerId: formData.partnerId,
                 items: buildItemsPayload(),
                 qtyMode: formData.qtyMode,
-                totalQtyKg: formData.qtyMode === 'TOTAL' ? Number(formData.totalQtyKg) : null,
+                totalQtyKg: formData.qtyMode === 'TOTAL' ? tonsToKg(formData.totalQtyT) : null,
                 tolerance: formData.tolerance,
                 formula: buildFormula(formData.formula, formData.formulaValue),
                 paymentTerms: formData.paymentTerms,
@@ -269,7 +283,7 @@ export default function ContractsPage() {
             direction,
             partnerId: direction === 'BUY' ? (c.supplierId || '') : (c.customerId || ''),
             qtyMode: c.qtyMode || 'PER_MATERIAL',
-            totalQtyKg: c.totalQtyKg ? String(Number(c.totalQtyKg)) : '',
+            totalQtyT: c.totalQtyKg ? kgToTonsInput(c.totalQtyKg) : '',
             tolerance: c.tolerance !== null && c.tolerance !== undefined ? Number(c.tolerance) : 5,
             formula: type,
             formulaValue: value,
@@ -281,7 +295,7 @@ export default function ContractsPage() {
         setItems(orderLines(c).map((l) => ({
             materialId: l.materialId,
             label: `${l.material?.code || '-'} - ${l.material?.name || ''}`,
-            qtyKg: l.qtyKg !== null && l.qtyKg !== undefined ? String(Number(l.qtyKg)) : '',
+            qtyT: kgToTonsInput(l.qtyKg),
             pricePerKg: l.pricePerKg !== undefined && l.pricePerKg !== null ? Number(l.pricePerKg) : null,
         })));
         setFormError('');
@@ -301,7 +315,7 @@ export default function ContractsPage() {
             await api.put(`/sourcing/contracts/${editingContract.id}`, {
                 items: buildItemsPayload(),
                 qtyMode: formData.qtyMode,
-                totalQtyKg: formData.qtyMode === 'TOTAL' ? Number(formData.totalQtyKg) : null,
+                totalQtyKg: formData.qtyMode === 'TOTAL' ? tonsToKg(formData.totalQtyT) : null,
                 tolerance: formData.tolerance !== '' ? Number(formData.tolerance) : null,
                 formula: buildFormula(formData.formula, formData.formulaValue),
                 paymentTerms: formData.paymentTerms,
@@ -323,14 +337,73 @@ export default function ContractsPage() {
     const openDetail = async (c) => {
         setDetailContract(c);
         setDetailTickets([]);
+        setDetailTransactions([]);
+        setDetailError('');
+        setTxFormOpen(false);
         setDetailLoading(true);
+        const [ticketsRes, txRes] = await Promise.allSettled([
+            api.get('/gate/tickets', { params: { contractId: c.id } }),
+            api.get(`/sourcing/contracts/${c.id}/transactions`),
+        ]);
+        setDetailTickets(ticketsRes.status === 'fulfilled' ? normalizeApiList(ticketsRes.value) : []);
+        setDetailTransactions(txRes.status === 'fulfilled' ? normalizeApiList(txRes.value) : []);
+        setDetailLoading(false);
+    };
+
+    // backend vraća narudžbu sa novom ispunjenošću nakon knjiženja/storna
+    const applyUpdatedContract = (updated) => {
+        setDetailContract(updated);
+        setContractsList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    };
+
+    const openTxForm = () => {
+        const lines = orderLines(detailContract);
+        setTxForm({
+            date: nowLocalInput(),
+            materialId: detailContract.qtyMode !== 'TOTAL' && lines.length === 1 ? lines[0].materialId : '',
+            qtyT: '',
+            note: '',
+        });
+        setTxError('');
+        setTxFormOpen(true);
+    };
+
+    const handleTxSubmit = async (e) => {
+        e.preventDefault();
+        if (!detailContract) return;
+        const qtyKg = tonsToKg(txForm.qtyT);
+        if (!(qtyKg > 0)) { setTxError('Unesi količinu u tonama.'); return; }
+        if (detailContract.qtyMode !== 'TOTAL' && !txForm.materialId) { setTxError('Odaberi materijal sa narudžbe.'); return; }
+        setTxSaving(true);
         try {
-            const res = await api.get('/gate/tickets', { params: { contractId: c.id } });
-            setDetailTickets(normalizeApiList(res));
-        } catch {
-            setDetailTickets([]);
+            const res = await api.post(`/sourcing/contracts/${detailContract.id}/transactions`, {
+                materialId: txForm.materialId || null,
+                qtyKg,
+                date: toIso(txForm.date),
+                note: txForm.note,
+            });
+            const { transaction, contract } = res?.data?.data || {};
+            if (contract) applyUpdatedContract(contract);
+            if (transaction) setDetailTransactions((prev) => [transaction, ...prev]);
+            setTxFormOpen(false);
+        } catch (error) {
+            setTxError(error?.response?.data?.error || 'Knjiženje nije uspjelo.');
         } finally {
-            setDetailLoading(false);
+            setTxSaving(false);
+        }
+    };
+
+    const handleTxStorno = async (t) => {
+        if (!detailContract) return;
+        if (!window.confirm(`Stornirati ručni unos od ${fmtTons(t.qtyKg)}? Količina se vraća na narudžbu.`)) return;
+        setDetailError('');
+        try {
+            const res = await api.post(`/sourcing/contracts/${detailContract.id}/transactions/${t.id}/storno`);
+            const { transaction, contract } = res?.data?.data || {};
+            if (contract) applyUpdatedContract(contract);
+            if (transaction) setDetailTransactions((prev) => prev.map((x) => (x.id === transaction.id ? transaction : x)));
+        } catch (error) {
+            setDetailError(error?.response?.data?.error || 'Storno nije uspio.');
         }
     };
 
@@ -351,6 +424,40 @@ export default function ContractsPage() {
     const detailLines = detailContract ? orderLines(detailContract) : [];
     const detailPlanned = detailContract ? orderPlannedKg(detailContract) : 0;
     const detailTolerance = toNum(detailContract?.tolerance);
+    const detailIsSell = orderDirection(detailContract) === 'SELL';
+
+    // vaganja i ručni unosi u jednoj listi; na ispunjenost idu samo zatvorena vaganja i neostornirani unosi
+    const history = useMemo(() => {
+        const weighings = detailTickets.map((t) => ({
+            key: `w-${t.id}`,
+            kind: 'weighing',
+            date: t.date,
+            source: t,
+            material: t.material,
+            qtyKg: t.net,
+            status: t.status,
+            counts: String(t.status || '').toLowerCase() === 'zatvoren',
+        }));
+        const manual = detailTransactions.map((t) => ({
+            key: `m-${t.id}`,
+            kind: 'manual',
+            date: t.date,
+            source: t,
+            material: t.material,
+            qtyKg: t.qtyKg,
+            status: t.status,
+            counts: t.status !== 'Storniran',
+        }));
+        const rows = [...weighings, ...manual].sort((a, b) => new Date(b.date) - new Date(a.date));
+        const totals = rows.reduce((acc, r) => {
+            if (r.counts) acc[r.kind] += toNum(r.qtyKg);
+            return acc;
+        }, { weighing: 0, manual: 0 });
+        return { rows, totals };
+    }, [detailTickets, detailTransactions]);
+
+    const txQtyKg = tonsToKg(txForm.qtyT);
+    const txRemainingNow = detailContract ? orderRemainingKg(detailContract) : 0;
 
     return (
         <div className="ui-page">
@@ -364,8 +471,8 @@ export default function ContractsPage() {
 
             <div className="ui-kpi-grid">
                 <StatCard label="Aktivne narudžbe" icon={ClipboardList} value={fmtNum(stats.active)} loading={listLoading} />
-                <StatCard label="Preostalo za prijem" icon={ArrowDownToLine} value={fmtWeight(stats.buyRemaining)} hint="aktivne nabavke" loading={listLoading} />
-                <StatCard label="Preostalo za isporuku" icon={ArrowUpFromLine} tone="orange" value={fmtWeight(stats.sellRemaining)} hint="aktivne prodaje" loading={listLoading} />
+                <StatCard label="Preostalo za prijem" icon={ArrowDownToLine} value={fmtTons(stats.buyRemaining)} hint="aktivne nabavke" loading={listLoading} />
+                <StatCard label="Preostalo za isporuku" icon={ArrowUpFromLine} tone="orange" value={fmtTons(stats.sellRemaining)} hint="aktivne prodaje" loading={listLoading} />
                 <StatCard label="Završene" icon={CheckCircle2} tone="success" value={fmtNum(stats.finished)} loading={listLoading} />
             </div>
 
@@ -426,7 +533,7 @@ export default function ContractsPage() {
                                                             <div className="row-between" style={{ fontSize: 12 }}>
                                                                 <span className="font-code" style={{ fontWeight: 600 }}>{l.material?.code || '-'}</span>
                                                                 <span className="font-mono muted">
-                                                                    {isTotal ? fmtKg(l.doneKg) : `${fmtNum(l.doneKg)} / ${fmtNum(l.qtyKg)} kg`}
+                                                                    {isTotal ? fmtTons(l.doneKg) : tonsPair(l.doneKg, l.qtyKg)}
                                                                 </span>
                                                             </div>
                                                             {!isTotal && <ProgressBar size="sm" value={l.doneKg} max={l.qtyKg} tolerancePct={toNum(c.tolerance)} />}
@@ -441,11 +548,11 @@ export default function ContractsPage() {
                                                     max={planned}
                                                     tolerancePct={toNum(c.tolerance)}
                                                     valueText={planned > 0 ? `${fmtNum((done / planned) * 100)}%` : '-'}
-                                                    footLeft={`${fmtWeight(done)} od ${fmtWeight(planned)}`}
+                                                    footLeft={`${fmtTons(done)} od ${fmtTons(planned)}`}
                                                     tone={c.status === 'Otkazan' ? 'neutral' : undefined}
                                                 />
                                             </td>
-                                            <td className="num" style={{ fontWeight: 700 }}>{fmtKg(remaining)}</td>
+                                            <td className="num" style={{ fontWeight: 700 }}>{fmtTons(remaining)}</td>
                                             <td><StatusBadge status={c.status} /></td>
                                             <td onClick={(e) => e.stopPropagation()}>
                                                 <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
@@ -470,7 +577,7 @@ export default function ContractsPage() {
             {/* ---------- Detalji narudžbe ---------- */}
             <Modal
                 open={Boolean(detailContract)}
-                onClose={() => setDetailContract(null)}
+                onClose={() => { if (!txFormOpen) setDetailContract(null); }}
                 title={detailContract ? `Narudžba ${detailContract.code}` : ''}
                 subtitle={detailContract ? `${orderPartnerName(detailContract) || '-'} · ${detailContract.direction === 'SELL' ? 'prodaja (vaganje IZLAZ)' : 'nabavka (vaganje ULAZ)'}` : ''}
                 width={860}
@@ -507,8 +614,8 @@ export default function ContractsPage() {
                                 value={orderDoneKg(detailContract)}
                                 max={detailPlanned}
                                 tolerancePct={detailTolerance}
-                                footLeft={`Ispunjeno ${fmtKg(orderDoneKg(detailContract))} od ${fmtKg(detailPlanned)}`}
-                                footRight={`Preostalo ${fmtKg(orderRemainingKg(detailContract))}`}
+                                footLeft={`Ispunjeno ${fmtTons(orderDoneKg(detailContract))} od ${fmtTons(detailPlanned)}`}
+                                footRight={`Preostalo ${fmtTons(orderRemainingKg(detailContract))}`}
                             />
                             {detailContract.qtyMode !== 'TOTAL' && detailLines.length > 0 && (
                                 <div className="stack" style={{ gap: 14, marginTop: 18 }}>
@@ -518,11 +625,11 @@ export default function ContractsPage() {
                                             <ProgressBar
                                                 key={l.id || l.materialId}
                                                 label={`${l.material?.code || '-'} · ${l.material?.name || ''}`}
-                                                valueText={`${fmtNum(l.doneKg)} / ${fmtNum(l.qtyKg)} kg`}
+                                                valueText={tonsPair(l.doneKg, l.qtyKg)}
                                                 value={l.doneKg}
                                                 max={l.qtyKg}
                                                 tolerancePct={detailTolerance}
-                                                footRight={rem !== null ? `preostalo ${fmtKg(Math.max(0, rem))}` : ''}
+                                                footRight={rem !== null ? `preostalo ${fmtTons(Math.max(0, rem))}` : ''}
                                             />
                                         );
                                     })}
@@ -533,7 +640,7 @@ export default function ContractsPage() {
                                     {detailLines.map((l) => (
                                         <div key={l.id || l.materialId} className="row-between" style={{ fontSize: 12.5 }}>
                                             <span>{l.material?.code || '-'} · {l.material?.name || ''}</span>
-                                            <b className="font-mono">{fmtKg(l.doneKg)}</b>
+                                            <b className="font-mono">{fmtTons(l.doneKg)}</b>
                                         </div>
                                     ))}
                                 </div>
@@ -541,34 +648,61 @@ export default function ContractsPage() {
                         </div>
 
                         <div>
-                            <div className="ui-section-title">Vaganja na narudžbi</div>
+                            <div className="row-between" style={{ gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                                <div>
+                                    <div className="ui-section-title" style={{ marginBottom: 2 }}>Transakcije na narudžbi</div>
+                                    <div className="muted" style={{ fontSize: 12 }}>
+                                        Vaganja {fmtTons(history.totals.weighing)} · Ručno {fmtTons(history.totals.manual)}
+                                    </div>
+                                </div>
+                                <Button variant="soft" size="sm" icon={Plus} onClick={openTxForm}>Ručna transakcija</Button>
+                            </div>
+                            {detailError && <Alert tone="danger" onClose={() => setDetailError('')}>{detailError}</Alert>}
                             {detailLoading ? (
                                 <div className="ui-skeleton" style={{ height: 60 }} />
-                            ) : detailTickets.length === 0 ? (
-                                <div className="muted" style={{ fontSize: 12.5 }}>Još nema vaganja vezanih za ovu narudžbu.</div>
+                            ) : history.rows.length === 0 ? (
+                                <div className="muted" style={{ fontSize: 12.5 }}>Još nema vaganja ni ručnih unosa na ovoj narudžbi.</div>
                             ) : (
                                 <div className="ui-card" style={{ overflow: 'hidden' }}>
-                                    <div className="ui-table-wrap" style={{ maxHeight: 280 }}>
+                                    <div className="ui-table-wrap" style={{ maxHeight: 320 }}>
                                         <table>
                                             <thead>
                                                 <tr>
                                                     <th>Datum</th>
-                                                    <th>Kod</th>
-                                                    <th>Tablice</th>
+                                                    <th>Vrsta</th>
+                                                    <th>Dokument</th>
                                                     <th>Materijal</th>
-                                                    <th className="num">Neto</th>
+                                                    <th className="num">Količina</th>
                                                     <th>Status</th>
+                                                    <th style={{ width: 44 }} />
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {detailTickets.map((t) => (
-                                                    <tr key={t.id}>
-                                                        <td>{fmtDateTime(t.date)}</td>
-                                                        <td className="font-code" style={{ fontSize: 12 }}><Link href={`/gate/${t.id}`} style={{ color: 'var(--primary-ink)' }}>{t.code}</Link></td>
-                                                        <td>{t.plate || '-'}</td>
-                                                        <td>{t.material?.code || '-'} · {t.material?.name || ''}</td>
-                                                        <td className="num">{fmtKg(t.net)}</td>
-                                                        <td><StatusBadge status={t.status} /></td>
+                                                {history.rows.map((r) => (
+                                                    <tr key={r.key} style={{ opacity: r.counts ? 1 : 0.55 }}>
+                                                        <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.date)}</td>
+                                                        <td>{r.kind === 'weighing' ? <Badge tone="info">Vaganje</Badge> : <Badge tone="orange">Ručno</Badge>}</td>
+                                                        <td>
+                                                            {r.kind === 'weighing' ? (
+                                                                <>
+                                                                    <Link href={`/gate/${r.source.id}`} className="font-code" style={{ color: 'var(--primary-ink)', fontSize: 12 }}>{r.source.code}</Link>
+                                                                    <div className="muted" style={{ fontSize: 11.5 }}>{r.source.plate || '-'}</div>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <div style={{ fontSize: 12.5 }}>{r.source.note || '-'}</div>
+                                                                    {r.source.createdByName && <div className="muted" style={{ fontSize: 11.5 }}>Unio: {r.source.createdByName}</div>}
+                                                                </>
+                                                            )}
+                                                        </td>
+                                                        <td>{r.material ? `${r.material.code || '-'} · ${r.material.name || ''}` : <span className="muted">cijela narudžba</span>}</td>
+                                                        <td className="num" style={{ fontWeight: 600, textDecoration: r.counts ? 'none' : 'line-through' }}>{fmtTons(r.qtyKg)}</td>
+                                                        <td><StatusBadge status={r.status} /></td>
+                                                        <td>
+                                                            {r.kind === 'manual' && r.counts && (
+                                                                <Button variant="ghost" size="sm" icon={Undo2} aria-label="Storniraj ručni unos" title="Storno" onClick={() => handleTxStorno(r.source)} />
+                                                            )}
+                                                        </td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -576,7 +710,9 @@ export default function ContractsPage() {
                                     </div>
                                 </div>
                             )}
-                            <div className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>Na ispunjenost se računaju samo zatvorena vaganja; storno vraća količinu.</div>
+                            <div className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+                                Na ispunjenost se računaju zatvorena vaganja i ručni unosi; storno vraća količinu. Ručni unos ne mijenja stanje skladišta.
+                            </div>
                         </div>
 
                         <div className="ui-modal-footer" style={{ marginTop: 0 }}>
@@ -584,6 +720,76 @@ export default function ContractsPage() {
                             <Button icon={Pencil} onClick={() => handleOpenEdit(detailContract)}>Uredi narudžbu</Button>
                         </div>
                     </div>
+                )}
+            </Modal>
+
+            {/* ---------- Ručna transakcija ---------- */}
+            <Modal
+                open={txFormOpen && Boolean(detailContract)}
+                onClose={() => setTxFormOpen(false)}
+                title="Ručna transakcija"
+                subtitle={detailContract ? `${detailContract.code} · ${orderPartnerName(detailContract) || '-'} · ${detailIsSell ? 'isporučeno kupcu' : 'primljeno od dobavljača'}` : ''}
+                width={560}
+                zIndex={3500}
+            >
+                {detailContract && (
+                    <form onSubmit={handleTxSubmit} className="stack" style={{ gap: 16 }}>
+                        <div className="ui-form-grid">
+                            <Field label="Datum i vrijeme" required>
+                                <input type="datetime-local" className="ui-input" value={txForm.date} onChange={(e) => setTxForm((p) => ({ ...p, date: e.target.value }))} />
+                            </Field>
+                            <Field label={detailIsSell ? 'Isporučeno (t)' : 'Primljeno (t)'} required>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    className="ui-input font-mono"
+                                    placeholder="0"
+                                    autoFocus
+                                    value={txForm.qtyT}
+                                    onChange={(e) => setTxForm((p) => ({ ...p, qtyT: e.target.value }))}
+                                />
+                            </Field>
+                            <Field label="Materijal" required={detailContract.qtyMode !== 'TOTAL'} span="all">
+                                <select className="ui-input" value={txForm.materialId} onChange={(e) => setTxForm((p) => ({ ...p, materialId: e.target.value }))}>
+                                    <option value="">{detailContract.qtyMode === 'TOTAL' ? '- Cijela narudžba (bez materijala) -' : '- Odaberi materijal -'}</option>
+                                    {detailLines.map((l) => {
+                                        const rem = lineRemainingKg(l);
+                                        return (
+                                            <option key={l.id || l.materialId} value={l.materialId}>
+                                                {`${l.material?.code || '-'} · ${l.material?.name || ''}${rem !== null ? ` (preostalo ${fmtTons(Math.max(0, rem))})` : ''}`}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+                            </Field>
+                            <Field label="Napomena" span="all">
+                                <input
+                                    className="ui-input"
+                                    placeholder="npr. dovezeno prije uvođenja vage, otpremnica br. ..."
+                                    value={txForm.note}
+                                    onChange={(e) => setTxForm((p) => ({ ...p, note: e.target.value }))}
+                                />
+                            </Field>
+                        </div>
+
+                        <div className="ui-card" style={{ padding: 14, background: 'var(--surface-2)' }}>
+                            <div className="row-between" style={{ fontSize: 13 }}>
+                                <span className="muted">Preostalo na narudžbi</span>
+                                <span className="font-mono">
+                                    <b>{fmtTons(txRemainingNow)}</b>
+                                    {txQtyKg > 0 && <> → <b>{fmtTons(Math.max(0, txRemainingNow - txQtyKg))}</b></>}
+                                </span>
+                            </div>
+                        </div>
+
+                        {txError && <Alert tone="danger">{txError}</Alert>}
+
+                        <div className="ui-modal-footer" style={{ marginTop: 0 }}>
+                            <Button variant="secondary" onClick={() => setTxFormOpen(false)}>Odustani</Button>
+                            <Button type="submit" disabled={txSaving}>{txSaving ? 'Knjiženje...' : 'Proknjiži'}</Button>
+                        </div>
+                    </form>
                 )}
             </Modal>
 

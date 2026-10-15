@@ -40,6 +40,7 @@ import {
     fmtKg,
     fmtMoney,
     fmtNum,
+    fmtTons,
     fmtWeight,
     localYmd,
     pctChange,
@@ -466,8 +467,8 @@ export default function DashboardPage() {
                                         value={order.doneKg}
                                         max={order.plannedKg}
                                         tolerancePct={order.tolerance}
-                                        footLeft={`${fmtKg(order.doneKg)} / ${fmtKg(order.plannedKg)}`}
-                                        footRight={`preostalo ${fmtKg(order.remainingKg)}`}
+                                        footLeft={`${fmtTons(order.doneKg)} / ${fmtTons(order.plannedKg)}`}
+                                        footRight={`preostalo ${fmtTons(order.remainingKg)}`}
                                     />
                                 ))}
                             </div>

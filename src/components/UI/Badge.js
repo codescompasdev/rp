@@ -16,6 +16,8 @@ const STATUS_TONES = {
     completed: 'success',
     otvoren: 'info',
     storniran: 'danger',
+    'knjiženo': 'success',
+    knjizeno: 'success',
     najavljeno: 'info',
     stiglo: 'success',
     'čeka zatvaranje': 'warning',

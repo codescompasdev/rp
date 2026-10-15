@@ -14,7 +14,7 @@ import ProgressBar from '@/components/UI/ProgressBar';
 import { Badge, StatusBadge } from '@/components/UI/Badge';
 import SupplierFormFields from '@/components/Suppliers/SupplierFormFields';
 import api from '@/lib/api';
-import { fmtDate, fmtDateTime, fmtKg, fmtMoney, fmtNum, fmtWeight } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtKg, fmtMoney, fmtNum, fmtTons, fmtWeight } from '@/lib/format';
 import { normalizeApiList } from '@/lib/materialsAdapter';
 import { orderDoneKg, orderLines, orderPlannedKg, orderRemainingKg } from '@/lib/orders';
 import { bonitetTone, supplierFormToPayload, supplierToForm } from '@/lib/suppliers';
@@ -238,8 +238,8 @@ export default function SupplierDetailPage() {
                                                 value={done}
                                                 max={planned}
                                                 tolerancePct={Number(c.tolerance || 0)}
-                                                footLeft={`${fmtKg(done)} / ${fmtKg(planned)} · ${orderLines(c).map((l) => l.material?.code).filter(Boolean).join(', ')}`}
-                                                footRight={`preostalo ${fmtKg(orderRemainingKg(c))}`}
+                                                footLeft={`${fmtTons(done)} / ${fmtTons(planned)} · ${orderLines(c).map((l) => l.material?.code).filter(Boolean).join(', ')}`}
+                                                footRight={`preostalo ${fmtTons(orderRemainingKg(c))}`}
                                             />
                                         </div>
                                     );

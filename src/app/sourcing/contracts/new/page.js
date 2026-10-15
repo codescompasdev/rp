@@ -12,13 +12,14 @@ import Alert from '@/components/UI/Alert';
 import OrderFormFields from '@/components/Orders/OrderFormFields';
 import api from '@/lib/api';
 import { buildFormula } from '@/lib/orders';
+import { tonsToKg } from '@/lib/format';
 import { formatPickedMaterial, normalizeApiList, resolveBackendMaterial } from '@/lib/materialsAdapter';
 
 const EMPTY_FORM = {
     direction: 'BUY',
     partnerId: '',
     qtyMode: 'PER_MATERIAL',
-    totalQtyKg: '',
+    totalQtyT: '',
     tolerance: 5,
     formula: 'LME',
     formulaValue: '',
@@ -32,7 +33,7 @@ export default function NewOrderPage() {
     const [customers, setCustomers] = useState([]);
     const [materials, setMaterials] = useState([]);
     const [pickerOpen, setPickerOpen] = useState(false);
-    const [items, setItems] = useState([]); // { materialId, label, qtyKg }
+    const [items, setItems] = useState([]); // { materialId, label, qtyT }
     const [partnerQuery, setPartnerQuery] = useState('');
     const [createPartnerOpen, setCreatePartnerOpen] = useState(false);
     const [newPartnerName, setNewPartnerName] = useState('');
@@ -123,7 +124,7 @@ export default function NewOrderPage() {
             return;
         }
         setSubmitError('');
-        setItems((prev) => [...prev, { materialId: backend.id, label: formatPickedMaterial(material), qtyKg: '' }]);
+        setItems((prev) => [...prev, { materialId: backend.id, label: formatPickedMaterial(material), qtyT: '' }]);
     };
 
     const resetForm = () => {
@@ -143,11 +144,11 @@ export default function NewOrderPage() {
             setSubmitError('Dodaj bar jedan materijal.');
             return;
         }
-        if (form.qtyMode === 'PER_MATERIAL' && items.some((it) => !(Number(it.qtyKg) > 0))) {
-            setSubmitError('Unesi količinu (kg) za svaki materijal.');
+        if (form.qtyMode === 'PER_MATERIAL' && items.some((it) => !(tonsToKg(it.qtyT) > 0))) {
+            setSubmitError('Unesi količinu (t) za svaki materijal.');
             return;
         }
-        if (form.qtyMode === 'TOTAL' && !(Number(form.totalQtyKg) > 0)) {
+        if (form.qtyMode === 'TOTAL' && !(tonsToKg(form.totalQtyT) > 0)) {
             setSubmitError('Unesi ukupnu količinu narudžbe.');
             return;
         }
@@ -158,10 +159,10 @@ export default function NewOrderPage() {
                 partnerId: form.partnerId,
                 items: items.map((it) => ({
                     materialId: it.materialId,
-                    qtyKg: form.qtyMode === 'PER_MATERIAL' ? Number(it.qtyKg) : null,
+                    qtyKg: form.qtyMode === 'PER_MATERIAL' ? tonsToKg(it.qtyT) : null,
                 })),
                 qtyMode: form.qtyMode,
-                totalQtyKg: form.qtyMode === 'TOTAL' ? Number(form.totalQtyKg) : null,
+                totalQtyKg: form.qtyMode === 'TOTAL' ? tonsToKg(form.totalQtyT) : null,
                 tolerance: form.tolerance,
                 formula: buildFormula(form.formula, form.formulaValue),
                 paymentTerms: form.paymentTerms,

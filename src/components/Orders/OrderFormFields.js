@@ -96,8 +96,8 @@ export default function OrderFormFields({
                         </select>
                     </Field>
                     {form.qtyMode === 'TOTAL' ? (
-                        <Field label="Ukupno (kg)" required>
-                            <input type="number" min="0" className="ui-input font-mono" value={form.totalQtyKg} onChange={(e) => update({ totalQtyKg: e.target.value })} />
+                        <Field label="Ukupno (t)" required>
+                            <input type="number" min="0" step="any" className="ui-input font-mono" value={form.totalQtyT} onChange={(e) => update({ totalQtyT: e.target.value })} />
                         </Field>
                     ) : <div className="hide-mobile" />}
 
@@ -112,13 +112,14 @@ export default function OrderFormFields({
                                             <input
                                                 type="number"
                                                 min="0"
+                                                step="any"
                                                 className="ui-input font-mono"
                                                 placeholder="0"
-                                                value={it.qtyKg}
-                                                aria-label={`Količina za ${it.label}`}
-                                                onChange={(e) => setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyKg: e.target.value } : x)))}
+                                                value={it.qtyT}
+                                                aria-label={`Količina (t) za ${it.label}`}
+                                                onChange={(e) => setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, qtyT: e.target.value } : x)))}
                                             />
-                                            <span className="muted">kg</span>
+                                            <span className="muted">t</span>
                                         </div>
                                     ) : (
                                         <span className="muted" style={{ fontSize: 12 }}>dio ukupne količine</span>

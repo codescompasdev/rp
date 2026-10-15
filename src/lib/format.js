@@ -35,6 +35,22 @@ export function fmtWeight(value) {
     return `${fmtNum(kg, 0)} kg`;
 }
 
+/** Narudžbe se vode u tonama: 1.975.000 kg → "1.975 t", 25.340 kg → "25,34 t" */
+export function fmtTons(kg, digits = 3) {
+    return `${fmtNum(toNum(kg) / 1000, digits)} t`;
+}
+
+/** Unos u tonama → kg za backend (2 decimale kao u bazi) */
+export function tonsToKg(tons) {
+    return Math.round(toNum(String(tons ?? '').replace(',', '.')) * 100000) / 100;
+}
+
+/** kg iz baze → vrijednost za input u tonama */
+export function kgToTonsInput(kg) {
+    if (kg === null || kg === undefined || kg === '') return '';
+    return String(Math.round(toNum(kg) * 1000) / 1e6);
+}
+
 export function fmtMoney(value, digits = 2) {
     return `${toNum(value).toLocaleString(NUMBER_LOCALE, { minimumFractionDigits: digits, maximumFractionDigits: digits })} KM`;
 }

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authMiddleware } from '../middleware/auth.js';
+import { applyContractProgress } from '../services/contractProgress.js';
 const router = Router();
 const prisma = new PrismaClient();
 router.use(authMiddleware);
@@ -192,6 +193,82 @@ router.put('/contracts/:id', async (req, res) => {
       data: rest,
       include: CONTRACT_INCLUDE,
     });
+  });
+  res.json({ data });
+});
+
+// ---------- Ručne transakcije na narudžbi ----------
+
+router.get('/contracts/:id/transactions', async (req, res) => {
+  const data = await prisma.contractTransaction.findMany({
+    where: { contractId: req.params.id },
+    include: { material: true },
+    orderBy: { date: 'desc' },
+  });
+  res.json({ data });
+});
+
+router.post('/contracts/:id/transactions', async (req, res) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: req.params.id },
+    include: { items: true },
+  });
+  if (!contract) return res.status(404).json({ error: 'Narudžba nije pronađena.' });
+
+  const qtyKg = Number(req.body.qtyKg);
+  if (!(qtyKg > 0)) return res.status(400).json({ error: 'Količina mora biti veća od nule.' });
+
+  const materialId = req.body.materialId ? String(req.body.materialId) : null;
+  if (contract.qtyMode !== 'TOTAL' && !materialId) {
+    return res.status(400).json({ error: 'Odaberi materijal sa narudžbe.' });
+  }
+  if (materialId && !contract.items.some((i) => i.materialId === materialId)) {
+    return res.status(400).json({ error: 'Materijal nije na ovoj narudžbi.' });
+  }
+
+  const date = req.body.date ? new Date(req.body.date) : new Date();
+  if (Number.isNaN(date.getTime())) return res.status(400).json({ error: 'Neispravan datum.' });
+
+  const user = req.userId
+    ? await prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } })
+    : null;
+
+  const data = await prisma.$transaction(async (tx) => {
+    const created = await tx.contractTransaction.create({
+      data: {
+        contractId: contract.id,
+        materialId,
+        qtyKg,
+        date,
+        note: req.body.note ? String(req.body.note).trim() || null : null,
+        createdById: req.userId || null,
+        createdByName: user?.name || null,
+      },
+      include: { material: true },
+    });
+    await applyContractProgress(tx, contract.id, materialId, qtyKg, 1);
+    const updatedContract = await tx.contract.findUnique({ where: { id: contract.id }, include: CONTRACT_INCLUDE });
+    return { transaction: created, contract: updatedContract };
+  });
+  res.status(201).json({ data });
+});
+
+router.post('/contracts/:id/transactions/:txId/storno', async (req, res) => {
+  const existing = await prisma.contractTransaction.findFirst({
+    where: { id: req.params.txId, contractId: req.params.id },
+  });
+  if (!existing) return res.status(404).json({ error: 'Transakcija nije pronađena.' });
+  if (existing.status === 'Storniran') return res.status(400).json({ error: 'Transakcija je već stornirana.' });
+
+  const data = await prisma.$transaction(async (tx) => {
+    const voided = await tx.contractTransaction.update({
+      where: { id: existing.id },
+      data: { status: 'Storniran' },
+      include: { material: true },
+    });
+    await applyContractProgress(tx, existing.contractId, existing.materialId, existing.qtyKg, -1);
+    const updatedContract = await tx.contract.findUnique({ where: { id: existing.contractId }, include: CONTRACT_INCLUDE });
+    return { transaction: voided, contract: updatedContract };
   });
   res.json({ data });
 });

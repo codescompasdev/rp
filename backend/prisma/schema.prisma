@@ -103,6 +103,7 @@ model Material {
   inventoryTransactions InventoryTransaction[]
   xrfAnalyses XrfAnalysis[]
   contractItems ContractItem[]
+  contractTransactions ContractTransaction[]
 }
 
 model MaterialCategory {
@@ -165,6 +166,7 @@ model Contract {
   announcements Announcement[]
   items        ContractItem[]
   weighTickets WeighTicket[]
+  transactions ContractTransaction[]
 }
 
 model ContractItem {
@@ -176,6 +178,25 @@ model ContractItem {
   qtyKg      Decimal? @db.Decimal(14, 2)          // null ako je qtyMode = TOTAL
   doneKg     Decimal  @default(0) @db.Decimal(14, 2)
   pricePerKg Decimal? @db.Decimal(14, 4)
+
+  @@index([contractId])
+}
+
+// Ručno knjiženje na narudžbu (npr. isporuka prije uvođenja vage) — mijenja samo ispunjenost, ne stanje skladišta
+model ContractTransaction {
+  id            String    @id @default(cuid())
+  contractId    String
+  contract      Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  materialId    String?                           // null dozvoljeno kad je qtyMode = TOTAL
+  material      Material? @relation(fields: [materialId], references: [id])
+  qtyKg         Decimal   @db.Decimal(14, 2)
+  date          DateTime
+  note          String?
+  status        String    @default("Knjiženo")   // Knjiženo | Storniran
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([contractId])
 }
